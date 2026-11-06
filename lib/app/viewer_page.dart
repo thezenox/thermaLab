@@ -407,7 +407,9 @@ class _ViewerPageState extends State<ViewerPage> {
               _ToolButton(
                 icon: Icons.shutter_speed,
                 label: 'Shutter',
-                onPressed: ready && !c.busy ? c.runShutterCorrection : null,
+                onPressed: ready && !c.busy && c.canTriggerShutter
+                    ? c.runShutterCorrection
+                    : null,
               ),
               _ReleaseButton(
                 mode: recording

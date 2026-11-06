@@ -261,9 +261,33 @@ class T2sMetadata {
   };
 }
 
-/// One decoded camera frame: sensor counts plus metadata.
+/// Camera families with different stream layouts.
+enum CameraFamily {
+  /// InfiRay Xtherm line (T2S+, T2L, T3S, HT-301, ...): image rows of sensor
+  /// counts plus 4 metadata rows; temperatures from a radiometric model.
+  xtherm,
+
+  /// InfiRay Tiny1-C modules (P2 Pro, Topdon TC001, ...): a processed image
+  /// on top and a second half of temperatures in 1/64 K below.
+  tiny1c,
+}
+
+/// Temperatures from cameras that deliver them directly (Tiny1-C) are kept
+/// as "counts" on a linear scale, so the rest of the pipeline (statistics,
+/// colouring, markers, logging) works the same for every camera:
+/// count = (°C + [kLinearOffsetC]) * [kLinearCountsPerC], 0.05 °C steps
+/// from -40 °C to about 779 °C.
+const double kLinearOffsetC = 40.0;
+const double kLinearCountsPerC = 20.0;
+
+int linearCountFor(double celsius) =>
+    ((celsius + kLinearOffsetC) * kLinearCountsPerC).round().clamp(0, 16383);
+
+/// One decoded camera frame: sensor counts plus, for Xtherm cameras, the
+/// metadata needed by the temperature model.
 class T2sFrame {
   T2sFrame._({
+    required this.family,
     required this.profile,
     required this.width,
     required this.height,
@@ -272,13 +296,19 @@ class T2sFrame {
     required this.rawBytes,
   });
 
-  final SensorProfile profile;
+  final CameraFamily family;
+
+  /// Xtherm sensor constants; null for Tiny1-C frames.
+  final SensorProfile? profile;
   final int width;
   final int height;
 
-  /// Sensor counts, row-major, `width * height` entries.
+  /// Sensor counts, row-major, `width * height` entries. For Tiny1-C frames
+  /// these are linear temperature counts (see [linearCountFor]).
   final Uint16List counts;
-  final T2sMetadata meta;
+
+  /// Xtherm metadata rows; null for Tiny1-C frames.
+  final T2sMetadata? meta;
 
   /// The full frame exactly as received, for export.
   final Uint8List rawBytes;
@@ -307,11 +337,46 @@ class T2sFrame {
       profile,
     );
     return T2sFrame._(
+      family: CameraFamily.xtherm,
       profile: profile,
       width: frameWidth,
       height: imageHeight,
       counts: Uint16List.fromList(words.sublist(0, imageWords)),
       meta: meta,
+      rawBytes: data,
+    );
+  }
+
+  /// Decodes a Tiny1-C frame of `frameWidth x frameHeight` (two halves of
+  /// equal height). The lower half holds little-endian temperatures in
+  /// 1/64 K: T(°C) = raw / 64 - 273.15.
+  static T2sFrame? decodeTiny1c(
+    Uint8List payload,
+    int frameWidth,
+    int frameHeight,
+  ) {
+    if (frameHeight.isOdd || frameHeight < 4) return null;
+    final int wordCount = frameWidth * frameHeight;
+    if (payload.lengthInBytes < wordCount * 2) return null;
+    final Uint8List data = Uint8List.fromList(
+      payload.sublist(0, wordCount * 2),
+    );
+    final ByteData bytes = data.buffer.asByteData();
+    final int imageHeight = frameHeight ~/ 2;
+    final int n = frameWidth * imageHeight;
+    final int start = n * 2; // bytes: the upper half is the picture
+    final Uint16List counts = Uint16List(n);
+    for (int i = 0; i < n; i++) {
+      final int raw = bytes.getUint16(start + i * 2, Endian.little);
+      counts[i] = linearCountFor(raw / 64.0 - kZeroCelsius);
+    }
+    return T2sFrame._(
+      family: CameraFamily.tiny1c,
+      profile: null,
+      width: frameWidth,
+      height: imageHeight,
+      counts: counts,
+      meta: null,
       rawBytes: data,
     );
   }

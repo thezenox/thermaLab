@@ -1368,6 +1368,21 @@ abstract interface class UvcCamera {
   /// stream format is compressed or no frame has arrived yet.
   UvcRawFrame? copyLatestRawFrame();
 
+  /// Raw USB control transfer for vendor-specific commands (Android only).
+  ///
+  /// For device-to-host requests (bit 7 of [requestType] set) [length] bytes
+  /// are read and returned; otherwise [data] is sent and an empty list is
+  /// returned. Throws [UvcException] on failure.
+  Uint8List controlTransfer({
+    required int requestType,
+    required int request,
+    required int value,
+    required int index,
+    Uint8List? data,
+    int length = 0,
+    int timeoutMs = 1000,
+  });
+
   /// Copies the latest RGBA frame with [transform] applied to the pixel data.
   ///
   /// The returned frame's [UvcPreviewFrame.width] and [UvcPreviewFrame.height]

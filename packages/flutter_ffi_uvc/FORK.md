@@ -14,6 +14,10 @@ Trimmed to the plugin itself (no example app, tests or screenshots).
   `UvcCamera.copyLatestRawFrame()` returning a `UvcRawFrame`.
   Needed because thermal cameras such as the InfiRay T2S+ pack 16-bit sensor
   data into a YUYV stream, which the RGB conversion destroys.
+- **Vendor control transfers.** New export `uvc_vendor_control_transfer`
+  (raw `libusb_control_transfer` on the open device, Android only) and
+  `UvcCamera.controlTransfer()`, for camera commands that are not UVC
+  controls (InfiRay Tiny1-C modules such as the P2 Pro).
 - **Android build:** `compileSdk` 36 and NDK `27.0.12077973` to match the
   locally installed SDK.
 

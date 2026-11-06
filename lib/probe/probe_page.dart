@@ -470,9 +470,13 @@ class _ProbePageState extends State<ProbePage> {
     final T2sFrame? f = c.frame;
     if (f == null) return const SizedBox.shrink();
     final Map<String, Object?> rows = <String, Object?>{
-      'fpaTemp (°C)': f.meta.fpaTemp(f.profile),
-      'model shutter temp (°C)': c.table?.shutterTemp,
-      ...f.meta.toJson(),
+      'camera': c.cameraName,
+      'protocol': c.family.name,
+      if (f.meta != null) ...<String, Object?>{
+        'fpaTemp (°C)': f.meta!.fpaTemp(f.profile!),
+        'model shutter temp (°C)': c.table?.shutterTemp,
+        ...f.meta!.toJson(),
+      },
     };
     return ExpansionTile(
       title: const Text('Frame metadata'),

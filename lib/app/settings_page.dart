@@ -9,6 +9,7 @@ import '../overlay/overlay_engine.dart';
 import '../overlay/overlay_feature.dart';
 import '../overlay/visible_camera.dart';
 import '../render/palette.dart';
+import '../t2s/t2s_frame.dart' show CameraFamily;
 import 'overlay_calibration_page.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -34,6 +35,17 @@ class SettingsPage extends StatelessWidget {
         appBar: AppBar(title: const Text('Settings')),
         body: ListView(
           children: <Widget>[
+            if (c.streaming)
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined),
+                title: Text(c.cameraName),
+                subtitle: Text(
+                  c.family == CameraFamily.tiny1c
+                      ? 'Tiny1-C protocol: the camera calibrates itself'
+                      : 'Xtherm protocol, hardware revision '
+                            '${c.settings.revision.name.toUpperCase()}',
+                ),
+              ),
             const _Section('Display'),
             ListTile(
               title: const Text('Colour palette'),

@@ -100,6 +100,16 @@ class TemperatureTable {
     return n;
   }
 
+  /// Table for cameras that deliver temperatures directly (Tiny1-C): maps
+  /// the linear counts back to °C. Only the user offset applies.
+  static TemperatureTable linear(ModelSettings settings) {
+    final Float32List table = Float32List(kTableSize);
+    for (int i = 0; i < kTableSize; i++) {
+      table[i] = i / kLinearCountsPerC - kLinearOffsetC + settings.userOffset;
+    }
+    return TemperatureTable._(table, double.nan, double.nan, 0);
+  }
+
   static TemperatureTable build(
     T2sMetadata meta,
     SensorProfile profile,

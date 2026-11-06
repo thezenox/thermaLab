@@ -12,17 +12,18 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../render/palette.dart';
+import '../t2s/camera_catalog.dart';
 import '../t2s/flat_field.dart';
 import '../t2s/shutter_correction.dart';
 import '../t2s/t2s_commands.dart';
 import '../t2s/t2s_frame.dart';
 import '../t2s/temperature_model.dart';
+import '../t2s/tiny1c_commands.dart';
 
-/// USB IDs reported for T2S+ V2 units (macOS app, write-ups, issue reports).
-const Set<String> kKnownV2UsbIds = <String>{
-  '1514:0001',
-  '04b4:0100',
-  '3474:6002',
+/// USB IDs of cameras known to be T2S+ V2 units.
+final Set<String> kKnownV2UsbIds = <String>{
+  for (final KnownCamera c in kKnownCameras)
+    if (c.revision == HardwareRevision.v2) c.usbId,
 };
 
 enum DisplaySource { temperature, correctedCounts, rawCounts }
@@ -199,13 +200,33 @@ class ProbeController extends ChangeNotifier {
   /// A shutter correction has been attempted since connecting.
   bool _correctionAttempted = false;
 
+  /// Stream layout of the connected camera.
+  CameraFamily family = CameraFamily.xtherm;
+
+  /// Catalogue entry of the connected camera, null if unknown.
+  KnownCamera? knownModel;
+
+  /// Display name of the connected camera.
+  String cameraName = '';
+
+  /// Xtherm camera of unknown revision: decided from the first frames.
+  bool _revisionPending = false;
+
+  late final Tiny1cCommands _tiny1c = Tiny1cCommands(_camera.controlTransfer);
+
+  /// Whether the app can trigger the camera's shutter (Tiny1-C modules
+  /// calibrate on their own and offer no known command for it).
+  bool get canTriggerShutter => family == CameraFamily.xtherm;
+
   /// True while a V2 camera streams but has no shutter reference yet: the
   /// image would still show the raw stripes, so it is not shown.
   bool get calibrationPending =>
       streaming &&
-      settings.revision == HardwareRevision.v2 &&
-      correction == null &&
-      !_correctionAttempted;
+      family == CameraFamily.xtherm &&
+      (_revisionPending ||
+          (settings.revision == HardwareRevision.v2 &&
+              correction == null &&
+              !_correctionAttempted));
 
   /// Repeat the shutter correction on its own as the camera drifts.
   bool autoShutter = true;
@@ -424,7 +445,7 @@ class ProbeController extends ChangeNotifier {
     if (streaming || busy) return;
     final List<UvcUsbDevice> known = devices
         .where((UvcUsbDevice d) =>
-            kKnownV2UsbIds.contains(usbId(d.vendorId, d.productId)))
+            knownCamera(usbId(d.vendorId, d.productId)) != null)
         .toList();
     final List<UvcUsbDevice> pick = known.isNotEmpty ? known : devices;
     if (pick.length == 1) {
@@ -442,8 +463,9 @@ class ProbeController extends ChangeNotifier {
       await disconnect(keepLog: true);
       device = target;
       final String id = usbId(target.vendorId, target.productId);
-      final bool knownV2 = kKnownV2UsbIds.contains(id);
-      log('Opening $id (${knownV2 ? 'known V2 ID' : 'ID not in V2 list'})');
+      final KnownCamera? known = knownCamera(id);
+      knownModel = known;
+      log('Opening $id (${known?.name ?? 'model not in the catalogue'})');
       // Android requires CAMERA before it grants USB access to a UVC device.
       final bool cameraGranted = await _camera.ensureCameraPermission();
       log('Camera permission ${cameraGranted ? 'granted' : 'DENIED'}');
@@ -458,11 +480,29 @@ class ProbeController extends ChangeNotifier {
       for (final UvcCameraMode m in modes) {
         log('Mode: ${m.label} (format ${m.frameFormat})');
       }
-      mode = _pickMode(modes);
-      if (mode == null) {
-        status = 'No usable mode';
-        log('No uncompressed mode with a known sensor width found');
+      final StreamChoice? choice = chooseStream(<OfferedMode>[
+        for (int i = 0; i < modes.length; i++)
+          OfferedMode(modes[i].formatName, modes[i].width, modes[i].height, i),
+      ], known);
+      if (choice == null) {
+        status = 'Camera not supported';
+        log('No supported stream layout among the offered modes');
         return;
+      }
+      mode = modes[choice.modeIndex];
+      family = choice.family;
+      log('Protocol ${family.name}: ${choice.reason}');
+      if (family == CameraFamily.tiny1c) {
+        // The module corrects itself; nothing to wait for.
+        settings = settings.copyWith(revision: HardwareRevision.v1);
+        _revisionPending = false;
+        _correctionAttempted = true;
+        cameraName = known?.name ?? 'Tiny1-C thermal camera';
+      } else {
+        final HardwareRevision? rev = known?.revision;
+        _revisionPending = rev == null;
+        if (rev != null) settings = settings.copyWith(revision: rev);
+        cameraName = known?.name ?? 'Xtherm thermal camera';
       }
       log('Starting ${mode!.label}');
       final UvcPreviewStartResult result = await _camera.startPreview(
@@ -486,7 +526,11 @@ class ProbeController extends ChangeNotifier {
       notifyListeners();
 
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      sendCommand(T2sCommand.rawMode, 'raw mode');
+      if (family == CameraFamily.xtherm) {
+        sendCommand(T2sCommand.rawMode, 'raw mode');
+      } else {
+        await _setupTiny1c();
+      }
     } catch (e) {
       status = 'Connect failed';
       log('Connect failed: $e');
@@ -494,26 +538,59 @@ class ProbeController extends ChangeNotifier {
       busy = false;
       notifyListeners();
     }
-    // V2 frames are unusable without the shutter reference, so take one
-    // right away once the raw stream has settled.
-    if (streaming && settings.revision == HardwareRevision.v2) {
-      await Future<void>.delayed(const Duration(seconds: 2));
-      if (streaming) await runShutterCorrection();
+    if (!streaming || family != CameraFamily.xtherm) return;
+    // Let the raw stream settle, then decide the revision if needed: V2
+    // frames are unusable without a shutter reference taken by the app,
+    // V1 cameras correct themselves and only need a shutter click.
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    if (!streaming) return;
+    if (_revisionPending) {
+      _detectRevision();
+      await _loadCalibration();
+    }
+    if (settings.revision == HardwareRevision.v2) {
+      await runShutterCorrection();
+    } else {
+      triggerShutter();
+      _correctionAttempted = true;
+      notifyListeners();
     }
   }
 
-  UvcCameraMode? _pickMode(List<UvcCameraMode> all) {
-    bool usable(UvcCameraMode m) =>
-        m.formatName.toUpperCase() != 'MJPEG' &&
-        m.formatName.toUpperCase() != 'H264' &&
-        SensorProfile.forWidth(m.width) != null;
-    final List<UvcCameraMode> candidates = all.where(usable).toList();
-    if (candidates.isEmpty) return null;
-    // Prefer image + exactly 4 metadata rows (256x196, 384x292, ...).
-    for (final UvcCameraMode m in candidates) {
-      if (const <int>{184, 196, 292, 516}.contains(m.height)) return m;
+  /// Uncorrected V2 frames show strong pixel-to-pixel stripes, frames a V1
+  /// camera has corrected itself do not.
+  void _detectRevision() {
+    final T2sFrame? f = frame;
+    _revisionPending = false;
+    if (f == null) {
+      settings = settings.copyWith(revision: HardwareRevision.v2);
+      log('No frame to judge the revision; assuming V2');
+      return;
     }
-    return candidates.first;
+    double sum = 0;
+    int n = 0;
+    for (int y = 0; y < f.height; y += 2) {
+      final int row = y * f.width;
+      for (int x = 1; x < f.width; x++) {
+        sum += (f.counts[row + x] - f.counts[row + x - 1]).abs();
+        n++;
+      }
+    }
+    final double pixelNoise = sum / n;
+    final HardwareRevision rev =
+        pixelNoise > 40 ? HardwareRevision.v2 : HardwareRevision.v1;
+    settings = settings.copyWith(revision: rev);
+    log('Revision ${rev.name} detected (pixel-to-pixel noise '
+        '${pixelNoise.toStringAsFixed(1)} counts)');
+  }
+
+  Future<void> _setupTiny1c() async {
+    try {
+      await _tiny1c.setEmissivity(0.95);
+      log('Tiny1-C: emissivity 0.95');
+    } catch (e) {
+      log('Tiny1-C setup command failed: $e');
+    }
   }
 
   Future<void> disconnect({bool keepLog = false}) async {
@@ -528,6 +605,7 @@ class ProbeController extends ChangeNotifier {
     }
     frame = null;
     _correctionAttempted = false;
+    _revisionPending = false;
     hotMarker = null;
     coldMarker = null;
     _hotTarget = null;
@@ -568,12 +646,20 @@ class ProbeController extends ChangeNotifier {
   void triggerShutter() => sendCommand(T2sCommand.shutter, 'shutter');
 
   void setRange(MeasurementRange range) {
-    sendCommand(
-      range == MeasurementRange.high
-          ? T2sCommand.rangeHigh
-          : T2sCommand.rangeNormal,
-      'range ${range.name}',
-    );
+    if (family == CameraFamily.tiny1c) {
+      // High gain = normal range, low gain = high temperature range.
+      _tiny1c
+          .setHighGain(range == MeasurementRange.normal)
+          .then((_) => log('Tiny1-C: range ${range.name}'))
+          .catchError((Object e) => log('Tiny1-C range command failed: $e'));
+    } else {
+      sendCommand(
+        range == MeasurementRange.high
+            ? T2sCommand.rangeHigh
+            : T2sCommand.rangeNormal,
+        'range ${range.name}',
+      );
+    }
     settings = settings.copyWith(range: range);
     notifyListeners();
   }
@@ -607,6 +693,14 @@ class ProbeController extends ChangeNotifier {
   /// then holds still. The difference to the open picture is logged as
   /// evidence that the shutter really closed.
   Future<void> runShutterCorrection() async {
+    if (family == CameraFamily.tiny1c) {
+      log('Tiny1-C cameras run their shutter calibration on their own');
+      return;
+    }
+    if (settings.revision == HardwareRevision.v1) {
+      triggerShutter();
+      return;
+    }
     if (busy || frame == null) return;
     busy = true;
     status = 'Shutter correction…';
@@ -671,7 +765,7 @@ class ProbeController extends ChangeNotifier {
         closed.width,
         closed.height,
       );
-      _correctionFpa = closed.meta.fpaTemp(closed.profile);
+      _correctionFpa = closed.meta!.fpaTemp(closed.profile!);
       _correctionAge
         ..reset()
         ..start();
@@ -723,7 +817,9 @@ class ProbeController extends ChangeNotifier {
         settings.revision != HardwareRevision.v2) {
       return;
     }
-    final double fpa = f.meta.fpaTemp(f.profile);
+    final T2sMetadata? meta = f.meta;
+    if (meta == null) return;
+    final double fpa = meta.fpaTemp(f.profile!);
     final Duration interval = _connectedFor.elapsed < const Duration(minutes: 5)
         ? const Duration(minutes: 1)
         : const Duration(minutes: 3);
@@ -928,10 +1024,10 @@ class ProbeController extends ChangeNotifier {
     if (f == null || counts == null) return;
     final (int, int) at = point ?? (f.width ~/ 2, f.height ~/ 2);
     final int count = _spotCount(counts, f.width, f.height, at);
-    if (settings.revision == HardwareRevision.v2) {
+    if (settings.revision == HardwareRevision.v2 && f.meta != null) {
       final double? solved = solveShutterOffset(
-        meta: f.meta,
-        profile: f.profile,
+        meta: f.meta!,
+        profile: f.profile!,
         settings: settings,
         count: count,
         targetCelsius: knownCelsius,
@@ -945,11 +1041,7 @@ class ProbeController extends ChangeNotifier {
       log('Calibrated: shutterOffset=${solved.toStringAsFixed(2)} '
           'for ${knownCelsius.toStringAsFixed(1)} °C at $at');
     } else {
-      final TemperatureTable t = TemperatureTable.build(
-        f.meta,
-        f.profile,
-        settings.copyWith(userOffset: 0),
-      );
+      final TemperatureTable t = _tableFor(f, settings.copyWith(userOffset: 0));
       final double current = t.lookup(count);
       if (current.isNaN) {
         log('Calibration failed: model gives no value (NaN).');
@@ -999,7 +1091,9 @@ class ProbeController extends ChangeNotifier {
     lastFrameInfo =
         'format ${raw.frameFormat}, ${raw.width}x${raw.height}, '
         '${raw.bytes.length} bytes, seq ${raw.sequence}';
-    final T2sFrame? decoded = T2sFrame.decode(raw.bytes, raw.width, raw.height);
+    final T2sFrame? decoded = family == CameraFamily.tiny1c
+        ? T2sFrame.decodeTiny1c(raw.bytes, raw.width, raw.height)
+        : T2sFrame.decode(raw.bytes, raw.width, raw.height);
     if (decoded == null) {
       undecodableFrames++;
       if (undecodableFrames == 1 || undecodableFrames % 100 == 0) {
@@ -1011,6 +1105,12 @@ class ProbeController extends ChangeNotifier {
     _process(decoded);
   }
 
+  /// Count-to-°C table for a frame: the radiometric model for Xtherm
+  /// cameras, a plain linear table for cameras that deliver temperatures.
+  TemperatureTable _tableFor(T2sFrame f, ModelSettings s) => f.meta == null
+      ? TemperatureTable.linear(s)
+      : TemperatureTable.build(f.meta!, f.profile!, s);
+
   void _process(T2sFrame f) {
     // While the shutter is closed the picture shows only the shutter; keep
     // the last image on screen like commercial cameras do.
@@ -1020,11 +1120,7 @@ class ProbeController extends ChangeNotifier {
     }
     _shutterReleased.stop();
     _maybeReNuc(f);
-    final TemperatureTable t = TemperatureTable.build(
-      f.meta,
-      f.profile,
-      settings,
-    );
+    final TemperatureTable t = _tableFor(f, settings);
     table = t;
     final bool useCorrection =
         settings.revision == HardwareRevision.v2 && correction != null;
@@ -1045,15 +1141,17 @@ class ProbeController extends ChangeNotifier {
       counts = ff.apply(counts);
     }
     processedCounts = counts;
-    final TemperatureTable alt = TemperatureTable.build(
-      f.meta,
-      f.profile,
-      settings.copyWith(
-        shutterSource: settings.shutterSource == ShutterSource.register
-            ? ShutterSource.fpa
-            : ShutterSource.register,
-      ),
-    );
+    final TemperatureTable alt = f.meta == null
+        ? t
+        : TemperatureTable.build(
+            f.meta!,
+            f.profile!,
+            settings.copyWith(
+              shutterSource: settings.shutterSource == ShutterSource.register
+                  ? ShutterSource.fpa
+                  : ShutterSource.register,
+            ),
+          );
 
     final int n = f.width * f.height;
     int minC = 1 << 30;
@@ -1131,6 +1229,16 @@ class ProbeController extends ChangeNotifier {
 
     if (framesReceived % 75 == 0) {
       final int ticksNow = frameTick.value;
+      final T2sMetadata? meta = f.meta;
+      final String detail = meta == null
+          ? 'family=${family.name} '
+          : 'fpa=${meta.fpaTemp(f.profile!).toStringAsFixed(2)} '
+                'shutterRaw=${meta.shutterRaw} '
+                'shutterV2=${meta.shutterTempV2.toStringAsFixed(2)} '
+                'cal00=${meta.cal00} '
+                'level=${t.shutterLevel.toStringAsFixed(0)} '
+                'refMean=${correction?.referenceMean.toStringAsFixed(0)} '
+                'eps=${meta.emissivity.toStringAsFixed(3)} ';
       debugPrint('[probe] stats fps=${fps.toStringAsFixed(1)} '
           'rendered=${frameTick.value - _ticksAtLastStats} '
           'mean=${mean.toStringAsFixed(0)} std=${std.toStringAsFixed(1)} '
@@ -1139,14 +1247,7 @@ class ProbeController extends ChangeNotifier {
           'centreAlt=${alt.lookup(centerCount).toStringAsFixed(2)}C '
           'min=${t.lookup(minC).toStringAsFixed(1)} '
           'max=${t.lookup(maxC).toStringAsFixed(1)} '
-          'fpa=${f.meta.fpaTemp(f.profile).toStringAsFixed(2)} '
-          'shutterRaw=${f.meta.shutterRaw} '
-          'shutterV2=${f.meta.shutterTempV2.toStringAsFixed(2)} '
-          'cal00=${f.meta.cal00} level=${t.shutterLevel.toStringAsFixed(0)} '
-          'refMean=${correction?.referenceMean.toStringAsFixed(0)} '
-          'anchor=${anchorToModel ? 'model' : 'refMean'} '
-          'centreOtherAnchor=${_otherAnchorCentre(t, centerCount)} '
-          'eps=${f.meta.emissivity.toStringAsFixed(3)} '
+          '$detail'
           'corr=${correction != null} rev=${settings.revision.name}');
       _ticksAtLastStats = ticksNow;
     }
@@ -1188,16 +1289,6 @@ class ProbeController extends ChangeNotifier {
       from.$1 + (to.$1 - from.$1) * markerSmoothing,
       from.$2 + (to.$2 - from.$2) * markerSmoothing,
     );
-  }
-
-  /// Centre reading the other shutter anchor would give, for comparison.
-  String _otherAnchorCentre(TemperatureTable t, int centerCount) {
-    final ShutterCorrection? c = correction;
-    if (c == null) return 'n/a';
-    final double shift = c.referenceMean - t.shutterLevel;
-    final int other =
-        (centerCount + (anchorToModel ? shift : -shift)).round();
-    return '${t.lookup(other).toStringAsFixed(2)}C';
   }
 
   int _percentile(Uint32List histogram, int total, double q) {
@@ -1341,8 +1432,10 @@ class ProbeController extends ChangeNotifier {
           'shutterCorrection': correction != null,
           'deadPixels': correction?.deadPixels.length,
         },
-        'metadata': f.meta.toJson(),
-        'fpaTemp': f.meta.fpaTemp(f.profile),
+        'family': family.name,
+        'camera': cameraName,
+        'metadata': f.meta?.toJson(),
+        'fpaTemp': f.meta?.fpaTemp(f.profile!),
         'model': t == null
             ? null
             : <String, Object?>{

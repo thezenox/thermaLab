@@ -267,6 +267,56 @@ class FlutterFfiUvcBindings {
             )
           >();
 
+  // Hand-written (not ffigen output): vendor control transfers added in the
+  // thermaLab fork.
+  int uvc_vendor_control_transfer(
+    ffi.Pointer<uvc_session_t> session,
+    int requestType,
+    int request,
+    int value,
+    int index,
+    ffi.Pointer<ffi.Uint8> data,
+    int length,
+    int timeoutMs,
+  ) {
+    return _uvc_vendor_control_transfer(
+      session,
+      requestType,
+      request,
+      value,
+      index,
+      data,
+      length,
+      timeoutMs,
+    );
+  }
+
+  late final _uvc_vendor_control_transfer = _lookup<
+          ffi.NativeFunction<
+            ffi.Int Function(
+              ffi.Pointer<uvc_session_t>,
+              ffi.Int,
+              ffi.Int,
+              ffi.Int,
+              ffi.Int,
+              ffi.Pointer<ffi.Uint8>,
+              ffi.Int,
+              ffi.Int,
+            )
+          >>('uvc_vendor_control_transfer')
+      .asFunction<
+            int Function(
+              ffi.Pointer<uvc_session_t>,
+              int,
+              int,
+              int,
+              int,
+              ffi.Pointer<ffi.Uint8>,
+              int,
+              int,
+            )
+          >();
+
   // Hand-written (not ffigen output): raw frame access added in the
   // t2s_thermal fork.
   int uvc_latest_raw_frame_bytes(ffi.Pointer<uvc_session_t> session) {

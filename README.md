@@ -4,8 +4,9 @@
 
 # thermaLab
 
-An Android app for the **InfiRay / Xinfrared T2S+** USB-C thermal camera
-that works without the vendor app. It shows real temperatures, takes
+An Android app for USB-C thermal cameras of the **InfiRay** family, made for
+the **T2S+** and also supporting the **P2 Pro**, **Topdon TC001** and related
+models. It works without the vendor apps. It shows real temperatures, takes
 photos, videos and temperature logs, and streams a live view with remote
 control to any browser in your Wi-Fi.
 
@@ -38,10 +39,19 @@ control to any browser in your Wi-Fi.
 
 ## Supported hardware
 
-| Camera | USB ID | Status |
-|---|---|---|
-| InfiRay / Xinfrared T2S+ V2 ("T2S+_A2") | `04b4:0100` | tested |
-| T2S+ V2, other IDs seen in the wild | `1514:0001`, `3474:6002` | should work, untested |
+The app recognises the camera on its own: first by its USB ID, otherwise by
+the shape of the video stream it offers.
+
+| Camera | USB ID | Protocol | Status |
+|---|---|---|---|
+| InfiRay / Xinfrared T2S+ V2 ("T2S+_A2") | `04b4:0100` | Xtherm | tested |
+| T2S+ V2, other IDs seen in the wild | `1514:0001`, `3474:6002` | Xtherm | should work, untested |
+| InfiRay P2 Pro, Topdon TC001 | `0bda:5830` | Tiny1-C | implemented from public protocol notes, untested |
+| Other Xtherm cameras: T2S+ V1, T2L, T3S, T3Pro, HT-301 (256, 384 or 640 px wide) | various | Xtherm | detected by stream size, untested |
+| Other Tiny1-C modules (picture and temperatures in one double-height stream) | various | Tiny1-C | detected by stream size, untested |
+
+Reports from owners of the untested cameras are very welcome: *Settings →
+Diagnostics → Export* produces a file with everything needed.
 
 Any Android phone with USB-C host support and Android 7.0 or newer should do.
 Development and testing happened on a Xiaomi phone with Android 16.
@@ -203,10 +213,13 @@ compared to the scene, so very hot or cold scenes are corrected approximately.
 
 ## For developers
 
-### How the camera works
+### How the cameras work
 
-The T2S+ is a USB Video Class device. The app talks to it with its own copy of
-libuvc, not through Android's camera API.
+All supported cameras are USB Video Class devices. The app talks to them with
+its own copy of libuvc, not through Android's camera API. There are two
+protocol families.
+
+#### Xtherm (T2S+ and relatives)
 
 - **Raw frames:** after the command `0x8004` the camera streams 256×196 YUY2
   frames whose bytes are really little-endian 16-bit words: 192 rows of 14-bit
@@ -233,8 +246,27 @@ libuvc, not through Android's camera API.
   count where the model returns the shutter temperature, and that temperature
   is taken from the focal-plane sensor, because the V2 shutter register does
   not track the real shutter.
+- **V1 or V2:** known USB IDs decide; otherwise the app measures the
+  pixel-to-pixel noise of the first frames. Uncorrected V2 frames show strong
+  stripes, frames a V1 camera has corrected itself do not.
+
+#### Tiny1-C (P2 Pro, TC001)
+
+- The camera offers a 256×384 YUY2 stream: the upper half is a ready-coloured
+  picture, the lower half holds 16-bit temperatures, T(°C) = raw / 64 − 273.15.
+- The module runs its own shutter calibration; the app has no command to
+  trigger it, so the Shutter button is disabled.
+- Commands are vendor control transfers (request `0x45` out, `0x44` in, value
+  `0x78`, the command address in wIndex), followed by polling until the module
+  reports ready. The app uses them to set emissivity and to switch the gain
+  (high gain = normal range, low gain = high-temperature range).
+
+#### Both
+
 - **Lens shading** is a degree-4 polynomial surface fitted to a uniform scene
   and subtracted relative to the image centre.
+- Inside the app, temperatures from Tiny1-C cameras are stored as counts on a
+  linear scale (0.05 °C steps) so the same pipeline serves both families.
 
 ### Project layout
 
@@ -340,6 +372,9 @@ apart and there is no depth information.
 
 - Frame layout, commands and the radiometric model are ported from
   [IR-Py-Thermal](https://github.com/diminDDL/IR-Py-Thermal) (GPL-3.0).
+- The Tiny1-C stream layout and vendor commands follow
+  [P2Pro-Viewer](https://github.com/LeoDJ/P2Pro-Viewer) and
+  [PyThermalCamera](https://github.com/leswright1977/PyThermalCamera).
 - V2 findings from [t2s-thermal-macos](https://github.com/dzaczek/t2s-thermal-macos)
   and [Dmytro Engineering](https://dmytroengineering.com/content/projects/t2s-plus-thermal-camera-hacking).
 - USB access through a modified copy of

@@ -3878,6 +3878,51 @@ FFI_PLUGIN_EXPORT int32_t uvc_ctrl_get(uvc_session_t *s, int ctrl_id) {
   return ok ? value : INT32_MIN;
 }
 
+// Raw USB control transfer on the open device, for vendor-specific camera
+// commands that are not UVC controls. Returns the number of bytes
+// transferred, or a negative libusb / uvc error code.
+FFI_PLUGIN_EXPORT int uvc_vendor_control_transfer(
+    uvc_session_t *s,
+    int request_type,
+    int request,
+    int value,
+    int index,
+    uint8_t *data,
+    int length,
+    int timeout_ms) {
+  if (s == NULL || length < 0) {
+    return UVC_ERROR_INVALID_PARAM;
+  }
+#if defined(__ANDROID__)
+  pthread_mutex_lock(&s->usb_mutex);
+  uvc_device_handle_t *devh = s->devh;
+  if (devh == NULL) {
+    pthread_mutex_unlock(&s->usb_mutex);
+    set_last_error(s, "Camera is not open");
+    return UVC_ERROR_NO_DEVICE;
+  }
+  libusb_device_handle *usb_devh = uvc_get_libusb_handle(devh);
+  const int result = libusb_control_transfer(
+      usb_devh,
+      (uint8_t)request_type,
+      (uint8_t)request,
+      (uint16_t)value,
+      (uint16_t)index,
+      data,
+      (uint16_t)length,
+      (unsigned int)timeout_ms);
+  pthread_mutex_unlock(&s->usb_mutex);
+  if (result < 0) {
+    set_last_error(s, "control transfer 0x%02x/0x%02x failed: %d", request_type, request, result);
+  }
+  return result;
+#else
+  (void)request_type; (void)request; (void)value; (void)index;
+  (void)data; (void)timeout_ms;
+  return UVC_ERROR_NOT_SUPPORTED;
+#endif
+}
+
 FFI_PLUGIN_EXPORT int uvc_ctrl_set(uvc_session_t *s, int ctrl_id, int32_t value) {
   if (s == NULL) {
     return UVC_ERROR_INVALID_PARAM;

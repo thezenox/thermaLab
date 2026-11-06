@@ -1153,6 +1153,44 @@ class FfiUvcCamera implements UvcCamera, Finalizable {
   UvcPreviewFrame? copyLatestFrame() => _copyLatestFrameInternal();
 
   @override
+  Uint8List controlTransfer({
+    required int requestType,
+    required int request,
+    required int value,
+    required int index,
+    Uint8List? data,
+    int length = 0,
+    int timeoutMs = 1000,
+  }) {
+    final bool deviceToHost = (requestType & 0x80) != 0;
+    final int size = deviceToHost ? length : (data?.length ?? 0);
+    final Pointer<Uint8> buffer = calloc<Uint8>(size == 0 ? 1 : size);
+    try {
+      if (!deviceToHost && data != null) {
+        buffer.asTypedList(size).setAll(0, data);
+      }
+      final int result = _bindings.uvc_vendor_control_transfer(
+        _s,
+        requestType,
+        request,
+        value,
+        index,
+        buffer,
+        size,
+        timeoutMs,
+      );
+      if (result < 0) {
+        throw UvcException.fromNativeCode(result, message: lastError);
+      }
+      return deviceToHost
+          ? Uint8List.fromList(buffer.asTypedList(result))
+          : Uint8List(0);
+    } finally {
+      calloc.free(buffer);
+    }
+  }
+
+  @override
   UvcRawFrame? copyLatestRawFrame() {
     final int size = _bindings.uvc_latest_raw_frame_bytes(_s);
     if (size <= 0) return null;

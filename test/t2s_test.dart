@@ -24,13 +24,13 @@ void main() {
       expect(f.height, 192);
       expect(f.counts.length, 256 * 192);
       expect(f.counts.every((int v) => v == 9000), isTrue);
-      expect(f.meta.fpaRaw, 8617);
-      expect(f.meta.fpaTemp(f.profile), closeTo(20.0, 1e-9));
-      expect(f.meta.shutterRaw, 3000);
-      expect(f.meta.shutterTempV1, closeTo(300.0 - 273.15, 1e-9));
-      expect(f.meta.cal01, closeTo(0.25, 1e-7));
-      expect(f.meta.emissivity, closeTo(0.95, 1e-7));
-      expect(f.meta.firmwareVersion, 'T2S+V2.1');
+      expect(f.meta!.fpaRaw, 8617);
+      expect(f.meta!.fpaTemp(f.profile!), closeTo(20.0, 1e-9));
+      expect(f.meta!.shutterRaw, 3000);
+      expect(f.meta!.shutterTempV1, closeTo(300.0 - 273.15, 1e-9));
+      expect(f.meta!.cal01, closeTo(0.25, 1e-7));
+      expect(f.meta!.emissivity, closeTo(0.95, 1e-7));
+      expect(f.meta!.firmwareVersion, 'T2S+V2.1');
     });
 
     test('rejects frames that do not fit the layout', () {
@@ -43,7 +43,7 @@ void main() {
         buildFrame(shutterRaw: shutterRaw, shutterFixRaw: fix),
         256,
         196,
-      )!.meta;
+      )!.meta!;
       // raw < 2049: v = raw * 0.625, T = (v + 2731.5) / 10 - 273.15
       expect(meta(451, 0).shutterTempV2, closeTo(28.1875, 1e-9));
       // raw >= 2049: v = (0xFFF - raw) * -0.625
@@ -94,8 +94,8 @@ void main() {
 
     test('table is finite and increasing around the operating point', () {
       final TemperatureTable t = TemperatureTable.build(
-        frame.meta,
-        frame.profile,
+        frame.meta!,
+        frame.profile!,
         const ModelSettings(revision: HardwareRevision.v2),
       );
       double previous = double.negativeInfinity;
@@ -110,13 +110,13 @@ void main() {
     test('user offset shifts every value', () {
       const ModelSettings base = ModelSettings(revision: HardwareRevision.v2);
       final TemperatureTable a = TemperatureTable.build(
-        frame.meta,
-        frame.profile,
+        frame.meta!,
+        frame.profile!,
         base,
       );
       final TemperatureTable b = TemperatureTable.build(
-        frame.meta,
-        frame.profile,
+        frame.meta!,
+        frame.profile!,
         base.copyWith(userOffset: 2.5),
       );
       expect(b.lookup(9000) - a.lookup(9000), closeTo(2.5, 1e-3));
@@ -127,16 +127,16 @@ void main() {
         revision: HardwareRevision.v2,
       );
       final double? offset = solveShutterOffset(
-        meta: frame.meta,
-        profile: frame.profile,
+        meta: frame.meta!,
+        profile: frame.profile!,
         settings: settings,
         count: 9000,
         targetCelsius: 21.0,
       );
       expect(offset, isNotNull);
       final TemperatureTable t = TemperatureTable.build(
-        frame.meta,
-        frame.profile,
+        frame.meta!,
+        frame.profile!,
         settings.copyWith(shutterOffset: offset),
       );
       expect(t.lookup(9000), closeTo(21.0, 0.1));
@@ -162,8 +162,8 @@ void main() {
         196,
       )!;
       final TemperatureTable t = TemperatureTable.build(
-        bad.meta,
-        bad.profile,
+        bad.meta!,
+        bad.profile!,
         const ModelSettings(revision: HardwareRevision.v2),
       );
       expect(t.nanCount, greaterThan(0));

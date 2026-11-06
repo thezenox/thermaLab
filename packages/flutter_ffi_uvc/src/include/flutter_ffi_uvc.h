@@ -91,6 +91,17 @@ FFI_PLUGIN_EXPORT int uvc_copy_latest_frame_rgba_with_metadata(
     int *out_width,
     int *out_height,
     int64_t *out_sequence);
+// Raw USB control transfer for vendor-specific commands. Returns bytes
+// transferred or a negative error code. Android only.
+FFI_PLUGIN_EXPORT int uvc_vendor_control_transfer(
+    uvc_session_t *session,
+    int request_type,
+    int request,
+    int value,
+    int index,
+    uint8_t *data,
+    int length,
+    int timeout_ms);
 // Size in bytes of the latest unconverted frame payload, 0 if none yet.
 // Compressed formats (MJPEG, H.264) are never kept.
 FFI_PLUGIN_EXPORT int uvc_latest_raw_frame_bytes(uvc_session_t *session);
