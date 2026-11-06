@@ -155,7 +155,7 @@ class CsvLogger extends ChangeNotifier {
     _pointSignature = null;
     final f = controller.frame;
     _sink!
-      ..writeln('# thermaLab temperature log (InfiRay T2S+)')
+      ..writeln('# thermaLab temperature log, ${controller.cameraName}')
       ..writeln('# started ${formatTimestamp(now)}')
       ..writeln('# interval_s ${interval.toStringAsFixed(1)}')
       ..writeln('# point positions are sensor pixels'

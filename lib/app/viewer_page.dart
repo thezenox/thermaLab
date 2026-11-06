@@ -763,7 +763,7 @@ class _NoCamera extends StatelessWidget {
           const Icon(Icons.usb, color: Colors.white38, size: 48),
           const SizedBox(height: 12),
           Text(
-            busy ? status : 'Plug in the T2S+ camera',
+            busy ? status : 'Plug in the camera',
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white70, fontSize: 16),
           ),

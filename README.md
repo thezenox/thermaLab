@@ -34,8 +34,11 @@ control to any browser in your Wi-Fi.
 - **Remote control** from the browser: set and move points, trigger the
   shutter, take photos, record video and CSV, change display settings.
   Files are always saved on the phone.
-- Display options: palettes (Iron, White hot, Rainbow), rotation, mirroring,
-  minimum or fixed colour scale span, timestamp corner, label outlines
+- **Edit mode with live preview**: show or hide clock, colour bar and each
+  marker, drag clock and colour bar where you want them, rotate and mirror the
+  image, choose the palette, turn the whole display for landscape use, set the
+  label outline
+- Fixed or automatic colour scale with a minimum span
 
 ## Supported hardware
 
@@ -46,7 +49,8 @@ the shape of the video stream it offers.
 |---|---|---|---|
 | InfiRay / Xinfrared T2S+ V2 ("T2S+_A2") | `04b4:0100` | Xtherm | tested |
 | T2S+ V2, other IDs seen in the wild | `1514:0001`, `3474:6002` | Xtherm | should work, untested |
-| InfiRay P2 Pro, Topdon TC001 | `0bda:5830` | Tiny1-C | implemented from public protocol notes, untested |
+| InfiRay P2 Pro | `0bda:5830` | Tiny1-C | tested |
+| Topdon TC001 (same module and USB ID as the P2 Pro) | `0bda:5830` | Tiny1-C | should work, untested |
 | Other Xtherm cameras: T2S+ V1, T2L, T3S, T3Pro, HT-301 (256, 384 or 640 px wide) | various | Xtherm | detected by stream size, untested |
 | Other Tiny1-C modules (picture and temperatures in one double-height stream) | various | Tiny1-C | detected by stream size, untested |
 
@@ -71,21 +75,24 @@ Or build it yourself, see [Building](#building).
 1. Plug in the camera. Android offers to open thermaLab; tick "always" if you
    like.
 2. Allow **camera** access (Android only grants USB access to video devices to
-   apps with this permission) and **USB** access to the T2S+.
-3. The app connects on its own and runs a shutter correction. After a few
-   seconds you see a clean image.
+   apps with this permission) and **USB** access to the camera.
+3. The app recognises the camera and connects on its own. A T2S+ first runs a
+   shutter correction; a loading screen shows until the image is clean.
+4. On the very first start the app offers to set up the lens shading
+   correction (see below). You can also do it later.
 
 The camera needs one to two minutes to warm up. During that time it drifts
 quickly; the app re-calibrates more often, so expect a few shutter clicks.
 
 ### Main screen
 
-| Button | Action |
+| Control | Action |
 |---|---|
-| **Shutter** | Closes the shutter and re-calibrates the image. Use it if the picture gets streaky or after big temperature changes. |
-| **Photo** | Saves the current view with all markers to the gallery. |
-| **Video** | Records the view, markers included, until you tap Stop. |
-| **Settings** | All options, see below. |
+| **PHOTO / VIDEO** | Chooses what the release button does. |
+| **Release button** | White: takes a photo (a short flash confirms it). Red dot: starts a video; a red square stops it, the elapsed time shows above. Photos and videos include all markers and go to the gallery album *thermaLab*. |
+| **Shutter** | Closes the shutter and re-calibrates the image. Use it if the picture gets streaky or after big temperature changes. Greyed out for cameras that calibrate on their own (P2 Pro). |
+| **Settings** | Scale, shutter, temperature log, live stream and diagnostics. |
+| **Gear with pencil** (top right) | Edit mode, see below. |
 
 In the picture:
 
@@ -94,6 +101,22 @@ In the picture:
   smoothly and ignore changes below 0.2 °C, so they do not jump around on
   evenly warm surfaces.
 - **Numbered yellow discs** are your measurement points.
+
+### Edit mode
+
+The gear with the pencil at the top right opens a panel above the image. Every
+change shows live:
+
+- **Show**: clock, colour bar, centre, max and min marker on or off
+- **Image**: rotate in 90° steps, mirror, colour palette
+- **View**: turn the whole display (image, colour bar, clock and markers
+  together) for holding the phone in landscape. Photos, videos and the browser
+  get the picture in this reading direction.
+- **Label outline**: shadow, normal or thick outline around marker labels
+
+While the panel is open, drag the clock or the colour bar in the image to move
+it; both snap to the edges and the centre. **Done** saves the layout,
+**Reset layout** restores the default.
 
 ### Measurement points
 
@@ -169,9 +192,9 @@ preview line shows the resulting name. The **?** button lists all placeholders:
 
 ### Settings
 
-- **Display**: palette, mirror, rotation, fixed temperature scale (min/max),
-  minimum colour span (keeps evenly warm scenes calm instead of showing sensor
-  noise), timestamp position, outline around marker labels
+- **Display**: fixed temperature scale (min/max) and minimum colour span
+  (keeps evenly warm scenes calm instead of showing sensor noise). Everything
+  else about the look is in the edit mode.
 - **Shutter**: automatic shutter, lens shading correction, *Measure lens
   shading*
 - **Temperature log**: CSV logging and interval
@@ -206,7 +229,7 @@ compared to the scene, so very hot or cold scenes are corrected approximately.
 
 | Problem | Fix |
 |---|---|
-| "Plug in the T2S+ camera" although it is plugged in | Tap *Connect*; check that camera and USB access were allowed. Close the vendor app; only one app can use the camera. |
+| "Plug in the camera" although it is plugged in | Tap *Connect*; check that camera and USB access were allowed. Close the vendor app; only one app can use the camera. |
 | Image striped or noisy | Tap **Shutter**. |
 | Readings drift after plugging in | Normal during warm-up; the automatic shutter catches up. |
 | Browser shows "Connection lost" | Phone and computer must be in the same Wi-Fi; keep the app in the foreground. |
