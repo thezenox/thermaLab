@@ -148,6 +148,11 @@ class ProbeController extends ChangeNotifier {
   /// Which overlay elements are shown and where clock and scale sit.
   SceneLayout layout = const SceneLayout();
 
+  /// Clockwise quarter turns of the whole display (image, scale, clock and
+  /// markers together) on the phone screen, for portrait or landscape use.
+  /// Photos, videos and the stream keep the reading orientation.
+  int viewTurns = 0;
+
   /// Outline around marker labels: 0 shadow only, 1 normal, 2 thick.
   int labelOutline = 1;
 
@@ -298,6 +303,7 @@ class ProbeController extends ChangeNotifier {
               : const SceneLayout());
     labelOutline = prefs.getInt('labelOutline') ?? 1;
     mirror = prefs.getBool('mirror') ?? false;
+    viewTurns = prefs.getInt('viewTurns') ?? 0;
     flatFieldEnabled = prefs.getBool('flatFieldEnabled') ?? true;
     final String? paletteName = prefs.getString('palette');
     palette = Palette.all.firstWhere(
@@ -378,6 +384,11 @@ class ProbeController extends ChangeNotifier {
         if (value is! bool) return;
         flatFieldEnabled = value;
         await prefs.setBool('flatFieldEnabled', value);
+      case 'viewTurns':
+        final int? v = asInt();
+        if (v == null) return;
+        viewTurns = v % 4;
+        await prefs.setInt('viewTurns', viewTurns);
       case 'mirror':
         if (value is! bool) return;
         mirror = value;

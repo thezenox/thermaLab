@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../capture/capture_service.dart';
 import '../capture/csv_logger.dart';
@@ -13,6 +14,7 @@ import '../probe/probe_controller.dart';
 import '../render/geometry.dart';
 import '../render/scene_layout.dart';
 import '../render/scene_painter.dart';
+import 'edit_panel.dart';
 import 'scene_builder.dart';
 import 'settings_page.dart';
 
@@ -49,6 +51,42 @@ class _ViewerPageState extends State<ViewerPage> {
 
   /// Layout edit mode: toggle and move the overlay elements.
   bool _editing = false;
+
+  /// The one-time lens shading hint was considered this session.
+  bool _shadingHintChecked = false;
+
+  /// Points out once, on the first start with a camera, that lens shading
+  /// correction is not set up. Never again after that, also not when the
+  /// correction is switched off later.
+  Future<void> _maybeShowShadingHint() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('shadingHintShown') ?? false) return;
+    await prefs.setBool('shadingHintShown', true);
+    if (c.flatField != null || !mounted) return;
+    final bool? setUp = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('Lens shading not set up'),
+        content: const Text(
+          'Like most thermal cameras, this one reads the edges of the '
+          'picture a few degrees warmer than the centre. A one-time '
+          'measurement on an evenly warm surface corrects this. You can also '
+          'do it later in Settings.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Later'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Set up now'),
+          ),
+        ],
+      ),
+    );
+    if (setUp == true && mounted) await measureLensShading(context, c);
+  }
 
   /// Element being dragged in edit mode ('clock' or 'scale').
   String? _dragElement;
@@ -179,8 +217,8 @@ class _ViewerPageState extends State<ViewerPage> {
             children: <Widget>[
               _topBar(),
               Expanded(child: Center(child: _sceneArea())),
-              _secondaryBar(),
-              _toolbar(),
+              if (!_editing) _secondaryBar(),
+              if (!_editing) _toolbar(),
             ],
           ),
         ),
@@ -201,7 +239,18 @@ class _ViewerPageState extends State<ViewerPage> {
     if (c.busy && c.streaming) {
       chips.add(const _Badge(color: Colors.blueGrey, text: 'Shutter…'));
     }
-    if (_editing) return _editBar();
+    if (_editing) {
+      return EditPanel(
+        controller: c,
+        onDone: () {
+          c.setLayout(c.layout);
+          setState(() {
+            _editing = false;
+            _dragElement = null;
+          });
+        },
+      );
+    }
     return SizedBox(
       height: 40,
       child: Row(
@@ -219,59 +268,15 @@ class _ViewerPageState extends State<ViewerPage> {
     );
   }
 
-  /// Toggles for every overlay element, shown while editing the layout.
-  Widget _editBar() {
-    final SceneLayout l = c.layout;
-    Widget toggle(String label, bool on, SceneLayout Function(bool) apply) {
-      return Padding(
-        padding: const EdgeInsets.only(right: 6),
-        child: FilterChip(
-          label: Text(label),
-          selected: on,
-          showCheckmark: false,
-          visualDensity: VisualDensity.compact,
-          onSelected: (bool v) => c.setLayout(apply(v), persist: false),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: <Widget>[
-                  toggle('Clock', l.showClock, (bool v) => l.copyWith(showClock: v)),
-                  toggle('Colour bar', l.showScale, (bool v) => l.copyWith(showScale: v)),
-                  toggle('Centre', l.showCentre, (bool v) => l.copyWith(showCentre: v)),
-                  toggle('Max', l.showHottest, (bool v) => l.copyWith(showHottest: v)),
-                  toggle('Min', l.showColdest, (bool v) => l.copyWith(showColdest: v)),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          FilledButton(
-            onPressed: () {
-              c.setLayout(c.layout);
-              setState(() {
-                _editing = false;
-                _dragElement = null;
-              });
-            },
-            child: const Text('Done'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _sceneArea() {
     if (c.streaming && (c.image == null || c.calibrationPending)) {
       return const _Calibrating();
+    }
+    if (!_shadingHintChecked && c.streaming && c.image != null) {
+      _shadingHintChecked = true;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _maybeShowShadingHint(),
+      );
     }
     if (!c.streaming || c.image == null) {
       return _NoCamera(
@@ -288,7 +293,7 @@ class _ViewerPageState extends State<ViewerPage> {
     );
     if (data == null) return const CircularProgressIndicator();
 
-    return AspectRatio(
+    final Widget scene = AspectRatio(
       aspectRatio: data.aspectRatio,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints box) {
@@ -460,6 +465,9 @@ class _ViewerPageState extends State<ViewerPage> {
         },
       ),
     );
+    // The whole display (image and annotations) turns as one; touches are
+    // mapped back by RotatedBox, so dragging works in any orientation.
+    return RotatedBox(quarterTurns: c.viewTurns % 4, child: scene);
   }
 
   Widget _toolbar() {
@@ -791,9 +799,9 @@ class _ChipButton extends StatelessWidget {
     final Color fg = enabled ? Colors.white : Colors.white30;
     return Material(
       color: active ? activeColor.withValues(alpha: 0.85) : Colors.white10,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(6),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(6),
         onTap: onPressed,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),

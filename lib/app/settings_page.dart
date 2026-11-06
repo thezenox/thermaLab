@@ -8,7 +8,6 @@ import '../probe/probe_page.dart';
 import '../overlay/overlay_engine.dart';
 import '../overlay/overlay_feature.dart';
 import '../overlay/visible_camera.dart';
-import '../render/palette.dart';
 import '../t2s/t2s_frame.dart' show CameraFamily;
 import 'overlay_calibration_page.dart';
 
@@ -47,31 +46,13 @@ class SettingsPage extends StatelessWidget {
                 ),
               ),
             const _Section('Display'),
-            ListTile(
-              title: const Text('Colour palette'),
-              trailing: DropdownButton<Palette>(
-                value: c.palette,
-                underline: const SizedBox.shrink(),
-                items: <DropdownMenuItem<Palette>>[
-                  for (final Palette p in Palette.all)
-                    DropdownMenuItem<Palette>(value: p, child: Text(p.name)),
-                ],
-                onChanged: (Palette? p) {
-                  if (p != null) c.setPalette(p);
-                },
+            const ListTile(
+              leading: Icon(Icons.edit_note),
+              title: Text('Palette, rotation, mirroring, labels, layout'),
+              subtitle: Text(
+                'Tap the edit button at the top right of the main screen: '
+                'all changes show live in the image.',
               ),
-            ),
-            SwitchListTile(
-              title: const Text('Mirror image'),
-              subtitle: const Text('Flip the thermal image left/right'),
-              value: c.mirror,
-              onChanged: (bool v) => c.applySetting('mirror', v),
-            ),
-            ListTile(
-              title: const Text('Rotate image'),
-              subtitle: Text('${c.quarterTurns * 90}°'),
-              trailing: const Icon(Icons.rotate_90_degrees_cw),
-              onTap: c.rotate,
             ),
             SwitchListTile(
               title: const Text('Fixed temperature scale'),
@@ -120,32 +101,6 @@ class SettingsPage extends StatelessWidget {
               label: '${c.minSpan.toStringAsFixed(0)} °C',
               onChanged: c.fixedScale ? null : c.setMinSpan,
             ),
-            const ListTile(
-              leading: Icon(Icons.edit_note),
-              title: Text('Arrange the display'),
-              subtitle: Text(
-                'Use the edit button at the top right of the main screen to '
-                'show or hide clock, colour scale and markers and to move '
-                'them.',
-              ),
-            ),
-            ListTile(
-              title: const Text('Outline around marker labels'),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: SegmentedButton<int>(
-                  showSelectedIcon: false,
-                  segments: const <ButtonSegment<int>>[
-                    ButtonSegment<int>(value: 0, label: Text('Shadow')),
-                    ButtonSegment<int>(value: 1, label: Text('Normal')),
-                    ButtonSegment<int>(value: 2, label: Text('Thick')),
-                  ],
-                  selected: <int>{c.labelOutline},
-                  onSelectionChanged: (Set<int> v) =>
-                      c.applySetting('labelOutline', v.first),
-                ),
-              ),
-            ),
             const _Section('Shutter'),
             SwitchListTile(
               title: const Text('Automatic shutter'),
@@ -174,7 +129,7 @@ class SettingsPage extends StatelessWidget {
               ),
               trailing: const Icon(Icons.blur_circular),
               onTap: c.streaming && !c.busy
-                  ? () => _measureShading(context, c)
+                  ? () => measureLensShading(context, c)
                   : null,
             ),
             if (c.flatField != null)
@@ -386,7 +341,7 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-Future<void> _measureShading(BuildContext context, ProbeController c) async {
+Future<void> measureLensShading(BuildContext context, ProbeController c) async {
   final bool? go = await showDialog<bool>(
     context: context,
     builder: (BuildContext context) => AlertDialog(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app/viewer_page.dart';
 import 'capture/capture_service.dart';
@@ -8,6 +9,11 @@ import 'overlay/visible_camera.dart';
 import 'probe/probe_controller.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // The thermal view turns on its own (edit mode); the app frame stays put.
+  SystemChrome.setPreferredOrientations(<DeviceOrientation>[
+    DeviceOrientation.portraitUp,
+  ]);
   runApp(const T2sThermalApp());
 }
 
