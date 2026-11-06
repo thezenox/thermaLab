@@ -9,6 +9,9 @@ that works without the vendor app. It shows real temperatures, takes
 photos, videos and temperature logs, and streams a live view with remote
 control to any browser in your Wi-Fi.
 
+<img width="300" alt="image" src="https://github.com/user-attachments/assets/04cb02fd-67e5-496b-9afa-c2e3e9b3a9ab" />
+
+
 ## Features
 
 - **Live thermal view** with centre, hottest and coldest spot, a colour scale
