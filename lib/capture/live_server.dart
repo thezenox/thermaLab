@@ -27,6 +27,9 @@ class LiveServer {
   /// File name and content of the current CSV log, or null if none.
   Future<(String, String)?> Function()? csvProvider;
 
+  /// Log name and table rows from the given index, for the live table.
+  (String?, List<Map<String, Object?>>) Function(int from)? csvRowsProvider;
+
   /// Called for every command except "ack". Returns an optional message
   /// shown to that viewer.
   Future<String?> Function(Map<String, dynamic> command)? onCommand;
@@ -99,6 +102,20 @@ class LiveServer {
             onError: (Object _) => _clients.remove(client),
             cancelOnError: true,
           );
+        case '/csvdata':
+          final int from =
+              int.tryParse(request.uri.queryParameters['from'] ?? '') ?? 0;
+          final (String?, List<Map<String, Object?>>) data =
+              csvRowsProvider?.call(from) ?? (null, const <Map<String, Object?>>[]);
+          r.headers
+            ..contentType = ContentType.json
+            ..set(HttpHeaders.cacheControlHeader, 'no-store');
+          r.write(jsonEncode(<String, Object?>{
+            'log': data.$1,
+            'from': from,
+            'rows': data.$2,
+          }));
+          await r.close();
         case '/csv':
           final (String, String)? csv = await csvProvider?.call();
           if (csv == null) {

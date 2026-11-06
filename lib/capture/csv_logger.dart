@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -35,6 +36,18 @@ class CsvLogger extends ChangeNotifier {
 
   /// The last finished log, still offered for download.
   File? _lastFile;
+
+  /// Rows of the current (or last finished) log, for the live table in the
+  /// web viewer: time, elapsed seconds, hottest, coldest, centre and the
+  /// measurement points by label.
+  List<Map<String, Object?>> _rowData = <Map<String, Object?>>[];
+
+  /// Rows of the log offered to viewers (current, else last finished).
+  int get tableRows => _rowData.length;
+
+  /// Rows starting at [from], as JSON-ready maps.
+  List<Map<String, Object?>> rowsFrom(int from) =>
+      from >= _rowData.length ? const <Map<String, Object?>>[] : _rowData.sublist(math.max(0, from));
   IOSink? _sink;
   Timer? _timer;
   String? _pointSignature;
@@ -135,13 +148,14 @@ class CsvLogger extends ChangeNotifier {
     final String stamp = '${now.year}${two(now.month)}${two(now.day)}_'
         '${two(now.hour)}${two(now.minute)}${two(now.second)}';
     _file = File('${dir.path}/thermal_$stamp.csv');
+    _rowData = <Map<String, Object?>>[];
     _sink = _file!.openWrite();
     _started = now;
     rows = 0;
     _pointSignature = null;
     final f = controller.frame;
     _sink!
-      ..writeln('# T2S+ Thermal temperature log')
+      ..writeln('# thermaLab temperature log (InfiRay T2S+)')
       ..writeln('# started ${formatTimestamp(now)}')
       ..writeln('# interval_s ${interval.toStringAsFixed(1)}')
       ..writeln('# point positions are sensor pixels'
@@ -176,7 +190,21 @@ class CsvLogger extends ChangeNotifier {
       ].join(','));
     }
     String t(double? v) => v == null || v.isNaN ? '' : v.toStringAsFixed(2);
+    double? num2(double? v) =>
+        v == null || v.isNaN ? null : (v * 100).roundToDouble() / 100;
     final DateTime now = DateTime.now();
+    final double elapsedS = now.difference(_started!).inMilliseconds / 1000;
+    _rowData.add(<String, Object?>{
+      'time': formatTimestamp(now).split(' ').last,
+      'elapsed': (elapsedS * 10).roundToDouble() / 10,
+      'max': num2(s.maxTemp),
+      'min': num2(s.minTemp),
+      'centre': num2(s.centerTemp),
+      'points': <String, Object?>{
+        for (int i = 0; i < points.length; i++)
+          'P${i + 1}': num2(controller.temperatureAt(points[i].x, points[i].y)),
+      },
+    });
     sink.writeln(<String>[
       formatTimestamp(now),
       (now.difference(_started!).inMilliseconds / 1000).toStringAsFixed(1),

@@ -14,7 +14,9 @@ SceneData? buildScene(
   final ui.Image? image = c.image;
   final FrameStats? s = c.stats;
   final f = c.frame;
-  if (image == null || s == null || f == null) return null;
+  if (image == null || s == null || f == null || c.calibrationPending) {
+    return null;
+  }
 
   final (double, double) cold =
       c.coldMarker ?? (s.coldest.$1.toDouble(), s.coldest.$2.toDouble());

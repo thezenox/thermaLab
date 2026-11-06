@@ -77,7 +77,8 @@ class _ViewerPageState extends State<ViewerPage> {
   /// Second row: optional tools (CSV logging, camera overlay).
   Widget _secondaryBar() {
     final CsvLogger csv = capture.csv;
-    final bool ready = c.streaming && c.image != null;
+    final bool ready =
+        c.streaming && c.image != null && !c.calibrationPending;
     final List<Widget> items = <Widget>[
       if (kCameraOverlayEnabled)
         _ChipButton(
@@ -210,6 +211,9 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Widget _sceneArea() {
+    if (c.streaming && (c.image == null || c.calibrationPending)) {
+      return const _Calibrating();
+    }
     if (!c.streaming || c.image == null) {
       return _NoCamera(
         status: c.status,
@@ -335,7 +339,8 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Widget _toolbar() {
-    final bool ready = c.streaming && c.image != null;
+    final bool ready =
+        c.streaming && c.image != null && !c.calibrationPending;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: Row(
@@ -434,6 +439,38 @@ class _Badge extends StatelessWidget {
           fontSize: 12,
           fontWeight: FontWeight.w600,
         ),
+      ),
+    );
+  }
+}
+
+/// Shown from connecting until the first shutter correction is done, so the
+/// raw, striped sensor image never appears.
+class _Calibrating extends StatelessWidget {
+  const _Calibrating();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          SizedBox.square(
+            dimension: 48,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Calibrating camera…',
+            style: TextStyle(color: Colors.white70, fontSize: 16),
+          ),
+          SizedBox(height: 4),
+          Text(
+            'This takes a few seconds',
+            style: TextStyle(color: Colors.white38, fontSize: 13),
+          ),
+        ],
       ),
     );
   }

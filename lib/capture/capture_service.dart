@@ -17,7 +17,7 @@ import '../overlay/visible_camera.dart';
 import 'csv_logger.dart';
 import 'live_server.dart';
 
-const String kAlbum = 'T2S Thermal';
+const String kAlbum = 'thermaLab';
 
 /// Photos, video recording and the live stream, all fed from the composed
 /// scene so they show exactly what the viewer shows.
@@ -25,6 +25,7 @@ class CaptureService extends ChangeNotifier {
   CaptureService(this.controller, this.csv, this.camera) {
     controller.frameTick.addListener(_onFrame);
     liveServer.onCommand = _onRemoteCommand;
+    liveServer.csvRowsProvider = (int from) => (csv.fileName, csv.rowsFrom(from));
     liveServer.csvProvider = () async {
       final String? content = await csv.currentContent();
       final String? name = csv.fileName;
@@ -318,6 +319,8 @@ class CaptureService extends ChangeNotifier {
         'rows': csv.rows,
         'hasData': csv.hasData,
         'downloadable': csv.downloadable,
+        'log': csv.fileName,
+        'tableRows': csv.tableRows,
         'interval': csv.interval,
       },
     };
@@ -386,6 +389,10 @@ class CaptureService extends ChangeNotifier {
         if (!csv.enabled) return 'CSV logging is switched off on the phone';
         await csv.toggle();
         return csv.recording ? 'CSV logging running' : 'CSV logging paused';
+      case 'csvNew':
+        if (!csv.hasData) return null;
+        await csv.finish();
+        return 'Log closed. The next CSV recording starts a new file.';
       case 'set':
         final Object? key = cmd['k'];
         final Object? value = cmd['v'];

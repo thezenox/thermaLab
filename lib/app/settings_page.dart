@@ -372,7 +372,7 @@ class SettingsPage extends StatelessWidget {
               ),
             ),
             const AboutListTile(
-              applicationName: 'T2S+ Thermal',
+              applicationName: 'thermaLab',
               applicationLegalese: 'GNU General Public License v3.0',
               child: Text('About'),
             ),

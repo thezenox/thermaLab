@@ -196,6 +196,17 @@ class ProbeController extends ChangeNotifier {
   bool _rendering = false;
   bool _holdShutter = false;
 
+  /// A shutter correction has been attempted since connecting.
+  bool _correctionAttempted = false;
+
+  /// True while a V2 camera streams but has no shutter reference yet: the
+  /// image would still show the raw stripes, so it is not shown.
+  bool get calibrationPending =>
+      streaming &&
+      settings.revision == HardwareRevision.v2 &&
+      correction == null &&
+      !_correctionAttempted;
+
   /// Repeat the shutter correction on its own as the camera drifts.
   bool autoShutter = true;
 
@@ -516,6 +527,7 @@ class ProbeController extends ChangeNotifier {
       log('Disconnect: $e');
     }
     frame = null;
+    _correctionAttempted = false;
     hotMarker = null;
     coldMarker = null;
     _hotTarget = null;
@@ -670,6 +682,7 @@ class ProbeController extends ChangeNotifier {
       log('Shutter correction failed: $e');
     } finally {
       _holdShutter = false;
+      _correctionAttempted = true;
       _shutterReleased
         ..reset()
         ..start();
@@ -1294,7 +1307,7 @@ class ProbeController extends ChangeNotifier {
       final TemperatureTable? t = table;
       final FrameStats? s = stats;
       final Map<String, Object?> report = <String, Object?>{
-        'app': 't2s_thermal probe',
+        'app': 'thermaLab diagnostics',
         'timestamp': DateTime.now().toIso8601String(),
         'device': device == null
             ? null
@@ -1373,7 +1386,7 @@ class ProbeController extends ChangeNotifier {
       await SharePlus.instance.share(
         ShareParams(
           files: files.map((File file) => XFile(file.path)).toList(),
-          text: 'T2S+ probe snapshot $stamp',
+          text: 'thermaLab diagnostics snapshot $stamp',
         ),
       );
       log('Exported ${files.length} files');

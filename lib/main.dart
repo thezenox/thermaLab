@@ -44,7 +44,7 @@ class _T2sThermalAppState extends State<T2sThermalApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'T2S+ Thermal',
+      title: 'thermaLab',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorSchemeSeed: Colors.deepOrange,
