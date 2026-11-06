@@ -39,17 +39,17 @@ class _ViewerPageState extends State<ViewerPage> {
 
   MeasurePoint? _dragging;
   bool _overTrash = false;
-  Timer? _recordTicker;
+
+  /// Release button mode: photo or video.
+  bool _videoMode = false;
+
+  /// White flash over the image when a photo is taken.
+  double _flash = 0;
 
   /// Touch distance (logical pixels) within which a point can be grabbed.
   static const double _grabRadius = 32;
   static const double _trashSize = 56;
 
-  @override
-  void dispose() {
-    _recordTicker?.cancel();
-    super.dispose();
-  }
 
   void _toast(String? error, String success) {
     ScaffoldMessenger.of(context)
@@ -131,28 +131,30 @@ class _ViewerPageState extends State<ViewerPage> {
     );
   }
 
+  /// Takes a photo. Success is shown by a short flash over the image; only
+  /// errors produce a message.
   Future<void> _photo() async {
+    setState(() => _flash = 0.75);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _flash = 0);
+    });
     final String? error = await capture.takePhoto();
-    if (mounted) _toast(error, 'Photo saved to the gallery');
+    if (error != null && mounted) _toast(error, '');
   }
 
   Future<void> _toggleRecording() async {
-    if (capture.recording) {
-      _recordTicker?.cancel();
-      final String? error = await capture.stopRecording();
-      if (mounted) _toast(error, 'Video saved to the gallery');
+    final String? error = capture.recording
+        ? await capture.stopRecording()
+        : await capture.startRecording();
+    if (error != null && mounted) _toast(error, '');
+  }
+
+  void _release() {
+    if (_videoMode || capture.recording) {
+      _toggleRecording();
     } else {
-      final String? error = await capture.startRecording();
-      if (error != null) {
-        if (mounted) _toast(error, '');
-        return;
-      }
-      _recordTicker = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => setState(() {}),
-      );
+      _photo();
     }
-    if (mounted) setState(() {});
   }
 
   @override
@@ -179,14 +181,6 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Widget _topBar() {
     final List<Widget> chips = <Widget>[];
-    if (capture.recording) {
-      final Duration d = capture.recordingDuration;
-      chips.add(_Badge(
-        color: Colors.red,
-        text: 'REC ${d.inMinutes.toString().padLeft(2, '0')}:'
-            '${(d.inSeconds % 60).toString().padLeft(2, '0')}',
-      ));
-    }
     if (capture.streaming) {
       chips.add(_Badge(
         color: Colors.teal,
@@ -312,6 +306,18 @@ class _ViewerPageState extends State<ViewerPage> {
                 Positioned.fill(
                   child: CustomPaint(painter: ScenePainter(data)),
                 ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: _flash,
+                      duration: _flash > 0
+                          ? Duration.zero
+                          : const Duration(milliseconds: 280),
+                      curve: Curves.easeOut,
+                      child: const ColoredBox(color: Colors.white),
+                    ),
+                  ),
+                ),
                 if (_dragging != null)
                   Positioned.fromRect(
                     rect: trash,
@@ -341,43 +347,181 @@ class _ViewerPageState extends State<ViewerPage> {
   Widget _toolbar() {
     final bool ready =
         c.streaming && c.image != null && !c.calibrationPending;
+    final bool recording = capture.recording;
+    final Duration d = capture.recordingDuration;
+    const Color gold = Color(0xFFD4A84B);
+
+    Widget modeLabel(String text, bool video) {
+      final bool selected = _videoMode == video;
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _videoMode = video),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          child: Text(
+            text,
+            style: TextStyle(
+              color: selected ? gold : Colors.white70,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.6,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          _ToolButton(
-            icon: Icons.shutter_speed,
-            label: 'Shutter',
-            onPressed: ready && !c.busy ? c.runShutterCorrection : null,
+          SizedBox(
+            height: 32,
+            child: recording
+                ? Center(
+                    child: Text(
+                      '● ${d.inMinutes.toString().padLeft(2, '0')}:'
+                      '${(d.inSeconds % 60).toString().padLeft(2, '0')}',
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: <FontFeature>[
+                          FontFeature.tabularFigures(),
+                        ],
+                      ),
+                    ),
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      modeLabel('PHOTO', false),
+                      modeLabel('VIDEO', true),
+                    ],
+                  ),
           ),
-          _ToolButton(
-            icon: Icons.photo_camera,
-            label: 'Photo',
-            onPressed: ready ? _photo : null,
-          ),
-          _ToolButton(
-            icon: capture.recording
-                ? Icons.stop_circle
-                : Icons.fiber_manual_record,
-            label: capture.recording ? 'Stop' : 'Video',
-            color: Colors.redAccent,
-            onPressed: ready || capture.recording ? _toggleRecording : null,
-          ),
-          _ToolButton(
-            icon: Icons.settings,
-            label: 'Settings',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => SettingsPage(
-                  controller: c,
-                  capture: capture,
-                  overlay: widget.overlay,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: <Widget>[
+              _ToolButton(
+                icon: Icons.shutter_speed,
+                label: 'Shutter',
+                onPressed: ready && !c.busy ? c.runShutterCorrection : null,
+              ),
+              _ReleaseButton(
+                mode: recording
+                    ? _ReleaseMode.recording
+                    : (_videoMode ? _ReleaseMode.video : _ReleaseMode.photo),
+                onPressed: ready || recording ? _release : null,
+              ),
+              _ToolButton(
+                icon: Icons.settings,
+                label: 'Settings',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => SettingsPage(
+                      controller: c,
+                      capture: capture,
+                      overlay: widget.overlay,
+                    ),
+                  ),
                 ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _ReleaseMode { photo, video, recording }
+
+/// The big round release button, styled after phone camera apps: white for
+/// photos, red dot for video, red square to stop a recording.
+class _ReleaseButton extends StatefulWidget {
+  const _ReleaseButton({required this.mode, required this.onPressed});
+
+  final _ReleaseMode mode;
+  final VoidCallback? onPressed;
+
+  @override
+  State<_ReleaseButton> createState() => _ReleaseButtonState();
+}
+
+class _ReleaseButtonState extends State<_ReleaseButton> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const Color gold = Color(0xFFD4A84B);
+    const Color red = Color(0xFFD9342B);
+    final bool enabled = widget.onPressed != null;
+    final _ReleaseMode mode = widget.mode;
+    final Color ring = mode == _ReleaseMode.photo ? Colors.white : gold;
+    final Widget inner = switch (mode) {
+      _ReleaseMode.photo => Container(
+        key: const ValueKey<String>('photo'),
+        width: 58,
+        height: 58,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+      ),
+      _ReleaseMode.video => Container(
+        key: const ValueKey<String>('video'),
+        width: 54,
+        height: 54,
+        decoration: const BoxDecoration(color: red, shape: BoxShape.circle),
+      ),
+      _ReleaseMode.recording => Container(
+        key: const ValueKey<String>('stop'),
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: red,
+          borderRadius: BorderRadius.circular(5),
+        ),
+      ),
+    };
+
+    return Semantics(
+      button: true,
+      label: switch (mode) {
+        _ReleaseMode.photo => 'Take photo',
+        _ReleaseMode.video => 'Start video',
+        _ReleaseMode.recording => 'Stop video',
+      },
+      child: GestureDetector(
+        onTapDown: enabled ? (_) => setState(() => _down = true) : null,
+        onTapUp: enabled ? (_) => setState(() => _down = false) : null,
+        onTapCancel: () => setState(() => _down = false),
+        onTap: widget.onPressed,
+        child: AnimatedOpacity(
+          opacity: enabled ? 1 : 0.35,
+          duration: const Duration(milliseconds: 150),
+          child: AnimatedScale(
+            scale: _down ? 0.88 : 1,
+            duration: const Duration(milliseconds: 90),
+            child: Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: ring, width: 3),
+              ),
+              alignment: Alignment.center,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 160),
+                transitionBuilder: (Widget child, Animation<double> a) =>
+                    ScaleTransition(scale: a, child: child),
+                child: inner,
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -388,18 +532,16 @@ class _ToolButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
-    this.color,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onPressed;
-  final Color? color;
 
   @override
   Widget build(BuildContext context) {
     final bool enabled = onPressed != null;
-    final Color fg = enabled ? (color ?? Colors.white) : Colors.white24;
+    final Color fg = enabled ? Colors.white : Colors.white24;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: onPressed,

@@ -682,6 +682,12 @@ class ProbeController extends ChangeNotifier {
       log('Shutter correction failed: $e');
     } finally {
       _holdShutter = false;
+      if (!_correctionAttempted) {
+        // The last rendered image is still the raw, striped one; drop it so
+        // the loading screen stays until the first corrected frame. (Not
+        // disposed here: a pending paint may still hold it.)
+        image = null;
+      }
       _correctionAttempted = true;
       _shutterReleased
         ..reset()
