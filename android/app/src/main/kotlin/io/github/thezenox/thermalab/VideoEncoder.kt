@@ -1,4 +1,4 @@
-package io.thermalviewer.t2s_thermal
+package io.github.thezenox.thermalab
 
 import android.graphics.Bitmap
 import android.media.MediaCodec
