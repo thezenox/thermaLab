@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>T2S+ Thermal live</title>
+<style>
+  :root {
+    --bg: #0b0b0c;
+    --panel: #1b1b1e;
+    --line: #333338;
+    --text: #e8e6e3;
+    --muted: #b3b0ab;
+    --accent: #ff7a45;
+    --rec: #ff4d4d;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px; overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #bar {
+    display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+    background: var(--panel); border-top: 1px solid var(--line); flex-wrap: wrap;
+  }
+  #status { color: var(--muted); font-size: 12px; margin-right: auto; white-space: nowrap; }
+  button, select, input {
+    font: inherit; color: var(--text); background: #2a2a2e;
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  button { padding: 7px 12px; cursor: pointer; }
+  button:hover { border-color: #55555c; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.rec { color: #ff7373; }
+  button.recording { background: var(--rec); color: #fff; border-color: var(--rec); }
+  select { padding: 6px 8px; }
+  .remote { display: none; }
+  body.can-remote .remote { display: inline-block; }
+  body.can-remote:not(.csv-on) .remote.csv { display: none; }
+  #dCsv, #bCsvDown { display: none; }
+  body.csv-data #dCsv, body.csv-data #bCsvDown { display: inline-block; }
+  button.csv.recording { background: #2e7d32; border-color: #2e7d32; color: #fff; }
+  #viewonly { color: var(--muted); font-size: 12px; }
+  body.can-remote #viewonly { display: none; }
+  .panel {
+    position: absolute; top: 0; right: 0; bottom: 0; width: min(320px, 92vw);
+    background: var(--panel); border-left: 1px solid var(--line);
+    padding: 14px 16px; overflow-y: auto; transform: translateX(105%);
+    transition: transform .18s ease; z-index: 5;
+  }
+  .panel:not(.open) { visibility: hidden; }
+  .panel.open { transform: none; }
+  .panel h2 { font-size: 15px; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center; }
+  .row { margin: 0 0 14px; }
+  .row label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .row input[type=number] { width: 80px; padding: 5px 7px; }
+  .row input[type=text] { width: 100%; padding: 6px 8px; }
+  .preview { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all;
+    background: #121214; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  button.help { padding: 0 7px; margin-left: 6px; font-size: 12px; border-radius: 50%; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; max-width: min(520px, 92vw); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog td { padding: 3px 10px 3px 0; vertical-align: top; }
+  code { font-family: ui-monospace, Consolas, monospace; color: #ffb38f; }
+  .row input[type=range] { width: 100%; }
+  .inline { display: flex; gap: 8px; align-items: center; }
+  #toast {
+    position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+    background: rgba(20,20,22,.92); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 6;
+  }
+  #toast.show { opacity: 1; }
+  #tip {
+    position: absolute; pointer-events: none; padding: 2px 6px; border-radius: 4px;
+    background: rgba(0,0,0,.75); font-size: 12px; display: none; z-index: 4;
+    font-variant-numeric: tabular-nums;
+  }
+  #offline {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="offline">Connecting to the phone…</div>
+    <div id="tip"></div>
+    <div id="toast"></div>
+    <aside id="downloads" class="panel" aria-label="Downloads">
+      <h2>Download <button id="closeDownloads" aria-label="Close">✕</button></h2>
+      <div class="row"><label for="dPattern">File name pattern
+        <button id="dHelp" class="help" aria-label="Placeholder help">?</button></label>
+        <input type="text" id="dPattern" placeholder="e.g. Measurement_with_fan_" spellcheck="false"></div>
+      <div class="row"><label><input type="checkbox" id="dAppend"> Append date and time</label></div>
+      <div class="row"><label>Preview</label><div id="dPreview" class="preview"></div></div>
+      <div class="row inline">
+        <button id="dPhoto">Download photo</button>
+        <button id="dCsv">Download CSV</button>
+      </div>
+      <div class="row inline"><button id="dReset">Reset number to 1</button></div>
+    </aside>
+    <dialog id="helpDialog">
+      <h3>File name placeholders</h3>
+      <table>
+        <tr><td><code>{date}</code></td><td>2026-11-06</td></tr>
+        <tr><td><code>{time}</code></td><td>14-30-05</td></tr>
+        <tr><td><code>{datetime}</code></td><td>2026-11-06_14-30-05</td></tr>
+        <tr><td><code>{yyyy} {yy} {MM} {dd}</code></td><td>year, short year, month, day</td></tr>
+        <tr><td><code>{HH} {mm} {ss}</code></td><td>hour, minute, second</td></tr>
+        <tr><td><code>{n}</code></td><td>running number (1, 2, 3 …)</td></tr>
+        <tr><td><code>{n:3}</code></td><td>running number with 3 digits (001)</td></tr>
+        <tr><td><code>{max} {min} {centre}</code></td><td>hottest, coldest, centre temperature (23.4C)</td></tr>
+        <tr><td><code>{p1} {p2} …</code></td><td>temperature of measurement point 1, 2 …</td></tr>
+        <tr><td><code>{palette}</code></td><td>colour palette name</td></tr>
+      </table>
+      <p>Example: <code>Fan_{n:3}_{max}</code> gives <code>Fan_007_41.2C_2026-11-06_14-30-05.png</code>
+        with &ldquo;Append date and time&rdquo; switched on. Characters that are not allowed in
+        file names are replaced by <code>_</code>. The running number counts up with every photo
+        downloaded from this browser.</p>
+      <form method="dialog"><button>Close</button></form>
+    </dialog>
+    <aside id="settings" class="panel" aria-label="Display settings">
+      <h2>Display settings <button id="closeSettings" aria-label="Close">✕</button></h2>
+      <div class="row"><label for="sPalette">Colour palette</label><select id="sPalette"></select></div>
+      <div class="row"><label>Rotation</label><button id="sRotate">Rotate 90°</button> <span id="sRotation"></span></div>
+      <div class="row"><label><input type="checkbox" id="sMirror"> Mirror image</label></div>
+      <div class="row"><label><input type="checkbox" id="sFixed"> Fixed temperature scale</label>
+        <div class="inline"><input type="number" id="sMin" step="1"> … <input type="number" id="sMax" step="1"> °C</div></div>
+      <div class="row"><label for="sSpan">Minimum colour span: <span id="sSpanVal"></span> °C</label>
+        <input type="range" id="sSpan" min="0" max="20" step="1"></div>
+      <div class="row"><label for="sCorner">Timestamp position</label>
+        <select id="sCorner"><option value="0">Top left</option><option value="1">Top right</option>
+        <option value="2">Bottom left</option><option value="3">Bottom right</option></select></div>
+      <div class="row"><label for="sOutline">Outline around marker labels</label>
+        <select id="sOutline"><option value="0">Shadow</option><option value="1">Normal</option><option value="2">Thick</option></select></div>
+      <div class="row"><label><input type="checkbox" id="sAuto"> Automatic shutter</label></div>
+      <div class="row"><label><input type="checkbox" id="sFlat"> Lens shading correction</label></div>
+      <h2 style="margin-top:18px">Temperature log</h2>
+      <div class="row"><label><input type="checkbox" id="sCsv"> CSV logging</label></div>
+      <div class="row"><label for="sCsvInterval">Log interval</label>
+        <select id="sCsvInterval"><option value="0.5">0.5 s</option><option value="1">1 s</option>
+        <option value="5">5 s</option><option value="10">10 s</option></select></div>
+      <p style="color:var(--muted);font-size:12px">Long-press or double-click the image to add a measurement point, drag it to move, drag it onto the bin to delete.</p>
+    </aside>
+  </div>
+  <div id="bar">
+    <span id="status">offline</span>
+    <span id="viewonly">View only</span>
+    <button class="remote" id="bShutter">Shutter</button>
+    <button class="remote" id="bPhoto">Photo</button>
+    <button class="remote rec" id="bRecord">● Video</button>
+    <button class="remote csv" id="bCsv">● CSV</button>
+    <button id="bCsvDown">⤓ CSV</button>
+    <button class="remote" id="bSettings">Settings</button>
+    <select id="bSize" aria-label="Image size">
+      <option value="1">Fit</option><option value="0.75">75 %</option><option value="0.5">50 %</option>
+    </select>
+    <button id="bDownload">⤓ Download</button>
+    <button id="bFull">Fullscreen</button>
+  </div>
+</div>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const canvas = $('view');
+let ctx = canvas.getContext('2d');
+const off = document.createElement('canvas');
+const offCtx = off.getContext('2d');
+
+let ws = null;
+let frame = null;          // { h: header, temps: Int16Array }
+let lut = null;            // Uint8Array(256*3)
+let pending = false;       // a frame waits to be drawn
+let sizeFactor = 1;
+let fpsCount = 0, fps = 0;
+let drag = null;           // { id, x, y } in sensor coordinates while dragging
+let overTrash = false;
+let longPress = null;
+let lastMoveSent = 0;
+let imageRect = null;      // where the image is drawn, in CSS pixels
+
+// ---------------------------------------------------------------- geometry
+function sensorToDisplay(u, v, q, mirror) {
+  let r;
+  switch (((q % 4) + 4) % 4) {
+    case 1: r = [1 - v, u]; break;
+    case 2: r = [1 - u, 1 - v]; break;
+    case 3: r = [v, 1 - u]; break;
+    default: r = [u, v];
+  }
+  if (mirror) r[0] = 1 - r[0];
+  return r;
+}
+function displayToSensor(a, b, q, mirror) {
+  if (mirror) a = 1 - a;
+  switch (((q % 4) + 4) % 4) {
+    case 1: return [b, 1 - a];
+    case 2: return [1 - a, 1 - b];
+    case 3: return [1 - b, a];
+  }
+  return [a, b];
+}
+function markerXY(x, y) {
+  const h = frame.h, r = imageRect;
+  const [a, b] = sensorToDisplay((x + 0.5) / h.w, (y + 0.5) / h.h, h.settings.quarterTurns, h.settings.mirror);
+  return [r.x + a * r.w, r.y + b * r.h];
+}
+function toSensor(px, py) {
+  const h = frame.h, r = imageRect;
+  const a = Math.min(Math.max((px - r.x) / r.w, 0), 1);
+  const b = Math.min(Math.max((py - r.y) / r.h, 0), 1);
+  const [u, v] = displayToSensor(a, b, h.settings.quarterTurns, h.settings.mirror);
+  return [Math.min(h.w - 1, Math.floor(u * h.w)), Math.min(h.h - 1, Math.floor(v * h.h))];
+}
+function inImage(px, py) {
+  const r = imageRect;
+  return r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+}
+
+// ---------------------------------------------------------------- network
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { $('offline').style.display = 'none'; };
+  ws.onclose = () => {
+    $('offline').style.display = 'flex';
+    $('offline').textContent = 'Connection lost, retrying…';
+    $('status').textContent = 'offline';
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === 'string') {
+      const m = JSON.parse(ev.data);
+      if (m.c === 'toast') toast(m.msg);
+      return;
+    }
+    const buf = ev.data;
+    const len = new DataView(buf).getUint32(0, true);
+    const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, len)));
+    const start = 4 + len + ((4 + len) % 2);
+    // Row-delta coded 0.1 °C values -> absolute temperatures in 0.1 °C.
+    const temps = new Int16Array(buf.slice(start));
+    for (let row = 0; row < temps.length; row += header.w) {
+      for (let i = row + 1; i < row + header.w; i++) temps[i] += temps[i - 1];
+    }
+    if (header.lut) {
+      lut = new Uint8Array(256 * 3);
+      header.lut.forEach((c, i) => { lut[i * 3] = c >> 16; lut[i * 3 + 1] = (c >> 8) & 255; lut[i * 3 + 2] = c & 255; });
+    }
+    frame = { h: header, temps };
+    fpsCount++;
+    // Confirm right away: the phone sends the next frame as soon as this
+    // one arrived. Drawing always uses the newest frame and skips stale ones,
+    // so a slow or background tab never throttles the stream.
+    send({ c: 'ack' });
+    if (!pending) { pending = true; requestAnimationFrame(draw); }
+  };
+}
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+setInterval(() => { fps = fpsCount; fpsCount = 0; updateStatus(); }, 1000);
+
+// ---------------------------------------------------------------- drawing
+function draw() {
+  pending = false;
+  if (!frame || !lut) return;
+  const h = frame.h;
+  document.body.classList.toggle('can-remote', !!h.remote);
+  syncControls(h);
+  colorize();
+
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
+    canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  paintScene(cw, ch, sizeFactor, true);
+}
+
+// Colour the temperature grid into the offscreen sensor-size canvas.
+function colorize() {
+  const h = frame.h;
+  if (off.width !== h.w || off.height !== h.h) { off.width = h.w; off.height = h.h; }
+  const img = offCtx.createImageData(h.w, h.h);
+  const d = img.data, t = frame.temps, lo = h.lo, span = Math.max(h.hi - h.lo, 0.01);
+  for (let i = 0, j = 0; i < t.length; i++, j += 4) {
+    let k = Math.round(((t[i] / 10 - lo) / span) * 255);
+    k = k < 0 ? 0 : k > 255 ? 255 : k;
+    d[j] = lut[k * 3]; d[j + 1] = lut[k * 3 + 1]; d[j + 2] = lut[k * 3 + 2]; d[j + 3] = 255;
+  }
+  offCtx.putImageData(img, 0, 0);
+}
+
+// Draws image and annotations into ctx, fitted into cw x ch.
+function paintScene(cw, ch, fit, interactive) {
+  const h = frame.h, s = h.settings;
+  const odd = s.quarterTurns % 2 === 1;
+  const aspect = odd ? h.h / h.w : h.w / h.h;
+  let w = cw * fit, hh = w / aspect;
+  if (hh > ch * fit) { hh = ch * fit; w = hh * aspect; }
+  imageRect = { x: (cw - w) / 2, y: (ch - hh) / 2, w, h: hh };
+
+  ctx.save();
+  ctx.translate(imageRect.x + w / 2, imageRect.y + hh / 2);
+  if (s.mirror) ctx.scale(-1, 1);
+  ctx.rotate((s.quarterTurns % 4) * Math.PI / 2);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  const iw = odd ? hh : w, ih = odd ? w : hh;
+  ctx.drawImage(off, -iw / 2, -ih / 2, iw, ih);
+  ctx.restore();
+
+  const unit = Math.min(w, hh) / 360;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(imageRect.x, imageRect.y, w, hh); ctx.clip();
+  const userIds = h.points || [];
+  let u = 0;
+  for (const m of h.markers) {
+    let x = m.x, y = m.y, id = null;
+    if (m.k === 'user') {
+      id = userIds[u++];
+      if (interactive && drag && drag.id === id) { x = drag.x; y = drag.y; }
+    }
+    drawMarker(m, x, y, unit, interactive && drag && drag.id === id && id !== null, s.labelOutline);
+  }
+  drawScale(h, unit);
+  drawTimestamp(h.time, s.timestampCorner, unit);
+  if (interactive && drag) drawTrash(unit);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- downloads
+const PATTERN_KEY = 't2s.pattern', APPEND_KEY = 't2s.appendDate', COUNTER_KEY = 't2s.counter';
+function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
+function load(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } }
+
+// Placeholder values for the current frame and time.
+function placeholders(n) {
+  const now = new Date(), p2 = (v) => String(v).padStart(2, '0');
+  const t = (v) => (v === null || v === undefined ? 'NA' : v.toFixed(1) + 'C');
+  const vals = {
+    yyyy: String(now.getFullYear()), yy: String(now.getFullYear()).slice(2),
+    MM: p2(now.getMonth() + 1), dd: p2(now.getDate()),
+    HH: p2(now.getHours()), mm: p2(now.getMinutes()), ss: p2(now.getSeconds()),
+  };
+  vals.date = `${vals.yyyy}-${vals.MM}-${vals.dd}`;
+  vals.time = `${vals.HH}-${vals.mm}-${vals.ss}`;
+  vals.datetime = `${vals.date}_${vals.time}`;
+  vals.n = String(n);
+  if (frame) {
+    const ms = frame.h.markers;
+    const byKind = (k) => (ms.find((m) => m.k === k) || {}).t;
+    vals.max = t(byKind('hottest')); vals.min = t(byKind('coldest')); vals.centre = t(byKind('centre'));
+    vals.palette = frame.h.settings.palette.replace(/\s+/g, '');
+    ms.filter((m) => m.k === 'user').forEach((m) => { vals['p' + m.l] = t(m.t); });
+  }
+  return vals;
+}
+function buildName(pattern, ext, n) {
+  const vals = placeholders(n);
+  let name = pattern.replace(/\{(\w+)(?::(\d+))?\}/g, (all, key, width) => {
+    if (!(key in vals)) return all;
+    return width ? vals[key].padStart(parseInt(width, 10), '0') : vals[key];
+  });
+  if ($('dAppend').checked) name += (name && !/[_\-\s]$/.test(name) ? '_' : '') + vals.datetime;
+  name = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || vals.datetime;
+  return name + '.' + ext;
+}
+function nextNumber() { return parseInt(load(COUNTER_KEY, '1'), 10) || 1; }
+function updatePreview() {
+  store(PATTERN_KEY, $('dPattern').value);
+  store(APPEND_KEY, $('dAppend').checked ? '1' : '0');
+  $('dPreview').textContent = buildName($('dPattern').value, 'png', nextNumber());
+}
+function saveBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function downloadPhoto() {
+  if (!frame || !lut) { toast('No image yet'); return; }
+  const h = frame.h, odd = h.settings.quarterTurns % 2 === 1;
+  const longSide = 1280;
+  const sw = odd ? h.h : h.w, sh = odd ? h.w : h.h;
+  const W = sw >= sh ? longSide : Math.round(longSide * sw / sh);
+  const H = sw >= sh ? Math.round(longSide * sh / sw) : longSide;
+  const photo = document.createElement('canvas');
+  photo.width = W; photo.height = H;
+  const savedCtx = ctx, savedRect = imageRect;
+  ctx = photo.getContext('2d');
+  try {
+    colorize();
+    paintScene(W, H, 1, false);
+  } finally {
+    ctx = savedCtx; imageRect = savedRect;
+  }
+  const n = nextNumber();
+  const name = buildName($('dPattern').value, 'png', n);
+  photo.toBlob((blob) => {
+    if (!blob) { toast('Could not create the photo'); return; }
+    saveBlob(blob, name);
+    store(COUNTER_KEY, String(n + 1));
+    updatePreview();
+    toast('Saved ' + name);
+  }, 'image/png');
+}
+async function downloadCsv() {
+  try {
+    const r = await fetch('/csv', { cache: 'no-store' });
+    if (!r.ok) { toast('No CSV log yet'); return; }
+    const name = buildName($('dPattern').value, 'csv', nextNumber());
+    saveBlob(await r.blob(), name);
+    toast('Saved ' + name);
+  } catch (e) { toast('CSV download failed'); }
+}
+
+const COLORS = { centre: '#ffffff', hottest: '#ff5252', coldest: '#40c4ff', user: '#ffeb3b' };
+function fmt(t) { return t === null || t === undefined ? '--' : t.toFixed(1) + '°'; }
+function label(text, x, y, size, color, outline, align = 'left') {
+  ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  if (outline > 0) {
+    ctx.lineJoin = 'round'; ctx.strokeStyle = '#000';
+    ctx.lineWidth = outline === 2 ? size * 0.36 : size * 0.21;
+    ctx.strokeText(text, x, y);
+  } else {
+    ctx.shadowColor = '#000'; ctx.shadowBlur = 3;
+  }
+  ctx.fillStyle = color; ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0;
+}
+function drawMarker(m, x, y, unit, big, outline) {
+  const [px, py] = markerXY(x, y);
+  const r = (big ? 11 : 7) * unit, color = COLORS[m.k] || '#fff';
+  let reach = r;
+  if (m.k === 'user') {
+    // Measurement points: a numbered disc centred on the measured pixel.
+    const nsize = (big ? 13 : 10.5) * unit;
+    ctx.font = `800 ${nsize}px system-ui, sans-serif`;
+    const radius = Math.max((big ? 10.5 : 8) * unit, ctx.measureText(m.l || '').width / 2 + 3.5 * unit);
+    ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.lineWidth = 1.4 * unit; ctx.strokeStyle = '#000'; ctx.stroke();
+    ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(m.l || '', px, py + 0.5);
+    reach = radius;
+  } else {
+    const path = () => {
+      ctx.beginPath();
+      if (m.k === 'centre') { ctx.moveTo(px - r, py); ctx.lineTo(px + r, py); ctx.moveTo(px, py - r); ctx.lineTo(px, py + r); }
+      else {
+        const up = m.k === 'hottest';
+        ctx.moveTo(px, py + (up ? -r : r));
+        ctx.lineTo(px - r * .9, py + (up ? r * .6 : -r * .6));
+        ctx.lineTo(px + r * .9, py + (up ? r * .6 : -r * .6));
+        ctx.closePath();
+      }
+    };
+    path(); ctx.lineWidth = 3.2 * unit; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.stroke();
+    path(); ctx.lineWidth = 1.6 * unit; ctx.strokeStyle = color; ctx.stroke();
+  }
+  const text = fmt(m.t);
+  const size = 12.5 * unit;
+  ctx.font = `600 ${size}px system-ui, sans-serif`;
+  const tw = ctx.measureText(text).width;
+  let lx = px + reach + 3 * unit;
+  if (lx + tw > imageRect.x + imageRect.w - 4 * unit) lx = px - reach - 3 * unit - tw;
+  const ly = Math.min(Math.max(py, imageRect.y + size), imageRect.y + imageRect.h - size);
+  label(text, lx, ly, size, color, outline);
+}
+function drawScale(h, unit) {
+  const r = imageRect;
+  const barW = 9 * unit, barH = Math.min(r.h * 0.42, 170 * unit);
+  const right = r.x + r.w - 8 * unit;
+  const bx = right - barW, by = r.y + (r.h - barH) / 2;
+  const ticks = 5, size = 10.5 * unit;
+  ctx.font = `500 ${size}px system-ui, sans-serif`;
+  const labels = [];
+  for (let i = 0; i < ticks; i++) labels.push((h.hi - (h.hi - h.lo) * i / (ticks - 1)).toFixed(1));
+  const lw = Math.max(...labels.map((l) => ctx.measureText(l).width));
+  ctx.fillStyle = 'rgba(0,0,0,.4)';
+  roundRect(bx - lw - 10 * unit, by - 8 * unit, lw + barW + 14 * unit, barH + 16 * unit, 5 * unit); ctx.fill();
+  const g = ctx.createLinearGradient(0, by, 0, by + barH);
+  for (let i = 0; i <= 15; i++) {
+    const k = 255 - i * 17;
+    g.addColorStop(i / 15, `rgb(${lut[k * 3]},${lut[k * 3 + 1]},${lut[k * 3 + 2]})`);
+  }
+  ctx.fillStyle = g; ctx.fillRect(bx, by, barW, barH);
+  ctx.lineWidth = 0.8 * unit; ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.strokeRect(bx, by, barW, barH);
+  for (let i = 0; i < ticks; i++) {
+    const y = by + barH * i / (ticks - 1);
+    ctx.beginPath(); ctx.moveTo(bx - 3 * unit, y); ctx.lineTo(bx, y); ctx.stroke();
+    ctx.font = `500 ${size}px system-ui, sans-serif`;
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#000'; ctx.shadowBlur = 3; ctx.fillStyle = '#fff';
+    ctx.fillText(labels[i], bx - 5 * unit, y); ctx.shadowBlur = 0;
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.font = `500 ${10 * unit}px system-ui, sans-serif`;
+  ctx.fillText('°C', bx + barW / 2, by - 7 * unit);
+}
+function drawTimestamp(text, corner, unit) {
+  const r = imageRect, size = 11 * unit;
+  ctx.font = `500 ${size}px system-ui, sans-serif`;
+  const padX = 5 * unit, padY = 2.5 * unit;
+  const w = ctx.measureText(text).width + 2 * padX, h = size * 1.25 + 2 * padY;
+  const right = corner === 1 || corner === 3, bottom = corner >= 2;
+  const x = right ? r.x + r.w - w : r.x, y = bottom ? r.y + r.h - h : r.y;
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x + padX, y + h / 2);
+}
+function trashRect(unit) {
+  const r = imageRect, s = 56 * Math.max(unit, 0.8);
+  return { x: r.x + r.w / 2 - s / 2, y: r.y + r.h - s * 1.5, w: s, h: s };
+}
+function drawTrash(unit) {
+  const t = trashRect(unit);
+  ctx.beginPath(); ctx.arc(t.x + t.w / 2, t.y + t.h / 2, t.w / 2, 0, Math.PI * 2);
+  ctx.fillStyle = overTrash ? 'rgba(229,57,53,.9)' : 'rgba(0,0,0,.55)'; ctx.fill();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `${t.w * 0.45}px system-ui, sans-serif`;
+  ctx.fillText('🗑', t.x + t.w / 2, t.y + t.h / 2 + 1);
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+// ---------------------------------------------------------------- UI state
+function updateStatus() {
+  if (!frame) return;
+  const h = frame.h;
+  let s = `${fps} fps`;
+  if (h.busy) s += ' · shutter…';
+  $('status').textContent = s;
+  const rec = $('bRecord');
+  if (h.recording) {
+    const m = Math.floor(h.recordSeconds / 60), sec = h.recordSeconds % 60;
+    rec.textContent = `■ REC ${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    rec.classList.add('recording');
+  } else {
+    rec.textContent = '● Video'; rec.classList.remove('recording');
+  }
+  $('bShutter').disabled = !!h.busy;
+  const csv = h.csv || {};
+  document.body.classList.toggle('csv-on', !!csv.enabled);
+  document.body.classList.toggle('csv-data', !!csv.downloadable);
+  const b = $('bCsv');
+  b.textContent = csv.recording ? `❚❚ CSV (${csv.rows})` : (csv.hasData ? `● CSV (${csv.rows})` : '● CSV');
+  b.classList.toggle('recording', !!csv.recording);
+}
+function setIfIdle(el, prop, value) { if (document.activeElement !== el) el[prop] = value; }
+function syncControls(h) {
+  const s = h.settings, pal = $('sPalette');
+  if (pal.options.length !== h.palettes.length) {
+    pal.innerHTML = '';
+    for (const p of h.palettes) { const o = document.createElement('option'); o.value = o.textContent = p; pal.appendChild(o); }
+  }
+  setIfIdle(pal, 'value', s.palette);
+  $('sRotation').textContent = `${s.quarterTurns * 90}°`;
+  setIfIdle($('sFixed'), 'checked', s.fixedScale);
+  setIfIdle($('sMin'), 'value', s.fixedMin);
+  setIfIdle($('sMax'), 'value', s.fixedMax);
+  setIfIdle($('sSpan'), 'value', s.minSpan);
+  $('sSpanVal').textContent = Math.round(s.minSpan);
+  setIfIdle($('sCorner'), 'value', String(s.timestampCorner));
+  setIfIdle($('sOutline'), 'value', String(s.labelOutline));
+  setIfIdle($('sAuto'), 'checked', s.autoShutter);
+  setIfIdle($('sMirror'), 'checked', !!s.mirror);
+  const csv = h.csv || {};
+  setIfIdle($('sCsv'), 'checked', !!csv.enabled);
+  if (csv.interval !== undefined) setIfIdle($('sCsvInterval'), 'value', String(csv.interval));
+  $('sCsvInterval').disabled = !csv.enabled;
+  setIfIdle($('sFlat'), 'checked', !!s.flatField && !!s.flatFieldCalibrated);
+  $('sFlat').disabled = !s.flatFieldCalibrated;
+  $('sMin').disabled = $('sMax').disabled = !s.fixedScale;
+  $('sSpan').disabled = s.fixedScale;
+}
+let toastTimer = null;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ---------------------------------------------------------------- controls
+const set = (k, v) => send({ c: 'set', k, v });
+$('bShutter').onclick = () => send({ c: 'shutter' });
+$('bPhoto').onclick = () => send({ c: 'photo' });
+$('bRecord').onclick = () => send({ c: 'record' });
+$('bCsv').onclick = () => send({ c: 'csv' });
+$('bSettings').onclick = () => { $('downloads').classList.remove('open'); $('settings').classList.toggle('open'); };
+$('closeSettings').onclick = () => $('settings').classList.remove('open');
+$('bDownload').onclick = () => { $('settings').classList.remove('open'); $('downloads').classList.toggle('open'); updatePreview(); };
+$('closeDownloads').onclick = () => $('downloads').classList.remove('open');
+$('dPattern').value = load(PATTERN_KEY, '');
+$('dAppend').checked = load(APPEND_KEY, '1') === '1';
+$('dPattern').oninput = updatePreview;
+$('dAppend').onchange = updatePreview;
+$('dPhoto').onclick = downloadPhoto;
+$('dCsv').onclick = downloadCsv;
+$('dReset').onclick = () => { store(COUNTER_KEY, '1'); updatePreview(); };
+$('dHelp').onclick = () => $('helpDialog').showModal();
+setInterval(() => { if ($('downloads').classList.contains('open')) updatePreview(); }, 1000);
+$('bFull').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
+};
+$('bSize').onchange = (e) => { sizeFactor = parseFloat(e.target.value); if (frame) requestAnimationFrame(draw); };
+$('sPalette').onchange = (e) => set('palette', e.target.value);
+$('sRotate').onclick = () => frame && set('quarterTurns', (frame.h.settings.quarterTurns + 1) % 4);
+$('sFixed').onchange = (e) => set('fixedScale', e.target.checked);
+$('sMin').onchange = (e) => set('fixedMin', parseFloat(e.target.value));
+$('sMax').onchange = (e) => set('fixedMax', parseFloat(e.target.value));
+$('sSpan').oninput = (e) => set('minSpan', parseFloat(e.target.value));
+$('sCorner').onchange = (e) => set('timestampCorner', parseInt(e.target.value, 10));
+$('sOutline').onchange = (e) => set('labelOutline', parseInt(e.target.value, 10));
+$('sAuto').onchange = (e) => set('autoShutter', e.target.checked);
+$('sMirror').onchange = (e) => set('mirror', e.target.checked);
+$('sFlat').onchange = (e) => set('flatField', e.target.checked);
+$('sCsv').onchange = (e) => set('csvEnabled', e.target.checked);
+$('sCsvInterval').onchange = (e) => set('csvInterval', parseFloat(e.target.value));
+$('bCsvDown').onclick = downloadCsv;
+window.addEventListener('resize', () => frame && requestAnimationFrame(draw));
+
+// ---------------------------------------------------------------- pointer
+function localPos(e) { const b = canvas.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; }
+function pointNear(px, py) {
+  if (!frame) return null;
+  const ids = frame.h.points || [];
+  let u = 0, best = null, bestD = 30;
+  for (const m of frame.h.markers) {
+    if (m.k !== 'user') continue;
+    const id = ids[u++];
+    const [x, y] = markerXY(m.x, m.y);
+    const d = Math.hypot(x - px, y - py);
+    if (d < bestD) { bestD = d; best = id; }
+  }
+  return best;
+}
+function canRemote() { return frame && frame.h.remote; }
+function cancelLongPress() { if (longPress) { clearTimeout(longPress.timer); longPress = null; } }
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (!canRemote() || !imageRect) return;
+  const [px, py] = localPos(e);
+  if (!inImage(px, py)) return;
+  const id = pointNear(px, py);
+  canvas.setPointerCapture(e.pointerId);
+  if (id !== null) {
+    const [x, y] = toSensor(px, py);
+    drag = { id, x, y }; overTrash = false;
+    requestAnimationFrame(draw);
+    return;
+  }
+  longPress = {
+    x: px, y: py,
+    timer: setTimeout(() => {
+      const [sx, sy] = toSensor(px, py);
+      send({ c: 'add', x: sx, y: sy });
+      longPress = null;
+    }, 550),
+  };
+});
+canvas.addEventListener('pointermove', (e) => {
+  const [px, py] = localPos(e);
+  if (longPress && Math.hypot(px - longPress.x, py - longPress.y) > 8) cancelLongPress();
+  if (drag) {
+    const [x, y] = toSensor(px, py);
+    drag.x = x; drag.y = y;
+    const t = trashRect(Math.min(imageRect.w, imageRect.h) / 360);
+    overTrash = px >= t.x - 8 && px <= t.x + t.w + 8 && py >= t.y - 8 && py <= t.y + t.h + 8;
+    const now = performance.now();
+    if (now - lastMoveSent > 60) { send({ c: 'move', id: drag.id, x, y }); lastMoveSent = now; }
+    requestAnimationFrame(draw);
+    $('tip').style.display = 'none';
+    return;
+  }
+  showTip(px, py);
+});
+function endPointer() {
+  cancelLongPress();
+  if (!drag) return;
+  if (overTrash) send({ c: 'remove', id: drag.id });
+  else send({ c: 'move', id: drag.id, x: drag.x, y: drag.y });
+  drag = null; overTrash = false;
+  requestAnimationFrame(draw);
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', () => { $('tip').style.display = 'none'; });
+canvas.addEventListener('dblclick', (e) => {
+  if (!canRemote()) return;
+  const [px, py] = localPos(e);
+  if (!inImage(px, py) || pointNear(px, py) !== null) return;
+  const [x, y] = toSensor(px, py);
+  send({ c: 'add', x, y });
+});
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Temperature under the mouse cursor.
+function showTip(px, py) {
+  const tip = $('tip');
+  if (!frame || !imageRect || !inImage(px, py)) { tip.style.display = 'none'; return; }
+  const [x, y] = toSensor(px, py);
+  tip.textContent = (frame.temps[y * frame.h.w + x] / 10).toFixed(1) + ' °C';
+  tip.style.left = (px + 14) + 'px'; tip.style.top = (py + 14) + 'px';
+  tip.style.display = 'block';
+}
+
+connect();
+</script>
+</body>
+</html>

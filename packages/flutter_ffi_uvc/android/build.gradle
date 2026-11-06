@@ -1,0 +1,96 @@
+// The Android Gradle Plugin builds the native code with the Android NDK.
+
+group = "com.cornpip.flutter_ffi_uvc"
+version = "1.0"
+
+buildscript {
+    ext.kotlin_version = "2.1.0"
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        // The Android Gradle Plugin knows how to build native code with the NDK.
+        classpath("com.android.tools.build:gradle:8.11.1")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+// AGP 9 ships Built-in Kotlin; applying KGP on top of it makes Flutter warn.
+// Older AGP still needs the explicit apply.
+// https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-plugin-authors
+//
+// Keep the apply on this line: Flutter detects KGP by regex-scanning the file,
+// so a line starting with `apply plugin:` counts even inside a false `if`.
+def agpMajor = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.tokenize('.')[0] as int
+if (agpMajor < 9) { apply plugin: "kotlin-android" }
+
+android {
+    namespace = "com.cornpip.flutter_ffi_uvc"
+
+    // Bumping the plugin compileSdk version requires all clients of this plugin
+    // to bump the version in their app.
+    compileSdk = 36
+
+    ndkVersion = "27.0.12077973"
+
+    // Invoke the shared CMake build with the Android Gradle Plugin.
+    externalNativeBuild {
+        cmake {
+            path = "../src/CMakeLists.txt"
+
+            // The default CMake version for the Android Gradle Plugin is 3.10.2.
+            // https://developer.android.com/studio/projects/install-ndk#vanilla_cmake
+            //
+            // The Flutter tooling requires that developers have CMake 3.10 or later
+            // installed. You should not increase this version, as doing so will cause
+            // the plugin to fail to compile for some customers of the plugin.
+            // version "3.10.2"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        minSdk = 24
+        // The native platform listener reaches two static methods through
+        // GetStaticMethodID only, so consuming apps must keep them.
+        consumerProguardFiles "consumer-rules.pro"
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
+        externalNativeBuild {
+            cmake {
+                // Debug app builds compile this library at -O0, which makes
+                // the frame pipeline (NEON YUV conversion, MJPEG decode)
+                // unusably slow; the bundled prebuilts (libjpeg-turbo,
+                // libusb) are release binaries already. Keep symbols, always
+                // optimize.
+                arguments "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+            }
+        }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+}
