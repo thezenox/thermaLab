@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'geometry.dart';
 import 'palette.dart';
+import 'scene_layout.dart';
 
 /// The phone camera picture laid over or under the thermal image.
 class OverlayLayer {
@@ -73,7 +74,8 @@ class SceneData {
     required this.markers,
     required this.timestamp,
     this.highlightedMarker,
-    this.timestampCorner = 2,
+    this.layout = const SceneLayout(),
+    this.editing = false,
     this.labelOutline = 1,
     this.mirror = false,
     this.overlay,
@@ -92,8 +94,11 @@ class SceneData {
   /// Index into [markers] that is being dragged, drawn emphasised.
   final int? highlightedMarker;
 
-  /// 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right.
-  final int timestampCorner;
+  /// Visibility and position of clock, colour scale and markers.
+  final SceneLayout layout;
+
+  /// Layout edit mode: movable elements get an outline.
+  final bool editing;
 
   /// Outline around marker labels: 0 shadow only, 1 normal, 2 thick.
   final int labelOutline;
@@ -115,7 +120,8 @@ class SceneData {
     markers: markers,
     timestamp: timestamp,
     highlightedMarker: highlightedMarker,
-    timestampCorner: timestampCorner,
+    layout: layout,
+    editing: editing,
     labelOutline: labelOutline,
     mirror: mirror,
     overlay: overlay ?? this.overlay,
@@ -144,8 +150,52 @@ void paintScene(Canvas canvas, Size size, SceneData data) {
     _paintMarker(canvas, size, data, data.markers[i], unit,
         highlighted: i == data.highlightedMarker);
   }
-  _paintScale(canvas, size, data, unit);
-  _paintTimestamp(canvas, size, data.timestamp, data.timestampCorner, unit);
+  if (data.layout.showScale) _paintScale(canvas, size, data, unit);
+  if (data.layout.showClock) _paintTimestamp(canvas, size, data, unit);
+  if (data.editing) {
+    final Paint frame = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5 * unit
+      ..color = const Color(0xFFD4A84B);
+    if (data.layout.showScale) {
+      _dashedRect(canvas, scaleRect(size, data).inflate(2 * unit), frame, unit);
+    }
+    if (data.layout.showClock) {
+      _dashedRect(canvas, clockRect(size, data).inflate(1 * unit), frame, unit);
+    }
+  }
+}
+
+void _dashedRect(Canvas canvas, Rect r, Paint paint, double unit) {
+  final double dash = 5 * unit;
+  final double gap = 3.5 * unit;
+  void line(Offset a, Offset b) {
+    final double length = (b - a).distance;
+    final Offset dir = (b - a) / length;
+    for (double t = 0; t < length; t += dash + gap) {
+      canvas.drawLine(a + dir * t, a + dir * math.min(t + dash, length), paint);
+    }
+  }
+
+  line(r.topLeft, r.topRight);
+  line(r.topRight, r.bottomRight);
+  line(r.bottomRight, r.bottomLeft);
+  line(r.bottomLeft, r.topLeft);
+}
+
+double _unit(Size size) => size.shortestSide / 360.0;
+
+/// Places an element of [w] x [h] at fractional position [pos] inside the
+/// image, keeping [margin] to the edges.
+Rect _place(Size size, Offset pos, double w, double h, double margin) {
+  final double freeW = math.max(0, size.width - 2 * margin - w);
+  final double freeH = math.max(0, size.height - 2 * margin - h);
+  return Rect.fromLTWH(
+    margin + pos.dx * freeW,
+    margin + pos.dy * freeH,
+    w,
+    h,
+  );
 }
 
 /// Draws the part of the camera picture that matches the thermal view.
@@ -353,17 +403,18 @@ TextPainter _outlined(String s, double fontSize, double strokeWidth) {
   )..layout();
 }
 
-void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
+class _ScaleGeometry {
+  _ScaleGeometry(this.plate, this.bar, this.labels, this.unitLabel);
+  final Rect plate;
+  final Rect bar;
+  final List<TextPainter> labels;
+  final TextPainter unitLabel;
+}
+
+_ScaleGeometry _scaleGeometry(Size size, SceneData data) {
+  final double unit = _unit(size);
   final double barW = 9 * unit;
   final double barH = math.min(size.height * 0.42, 170 * unit);
-  final double right = size.width - 8 * unit;
-  final Rect bar = Rect.fromLTWH(
-    right - barW,
-    (size.height - barH) / 2,
-    barW,
-    barH,
-  );
-
   // Labels: top, 3 intermediate, bottom.
   const int ticks = 5;
   final List<TextPainter> labels = <TextPainter>[
@@ -377,17 +428,32 @@ void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
       ),
   ];
   final double labelW = labels.map((TextPainter t) => t.width).reduce(math.max);
-
-  final RRect plate = RRect.fromRectAndRadius(
-    Rect.fromLTRB(
-      bar.left - labelW - 10 * unit,
-      bar.top - 8 * unit,
-      bar.right + 4 * unit,
-      bar.bottom + 8 * unit,
-    ),
-    Radius.circular(5 * unit),
+  final TextPainter unitLabel =
+      _text('°C', 10 * unit, Colors.white70, weight: FontWeight.w500);
+  final double plateW = labelW + 10 * unit + barW + 4 * unit;
+  final double top = 6 * unit + unitLabel.height + 2 * unit;
+  final double plateH = top + barH + 8 * unit;
+  final Rect plate =
+      _place(size, data.layout.scalePos, plateW, plateH, 6 * unit);
+  final Rect bar = Rect.fromLTWH(
+    plate.right - 4 * unit - barW,
+    plate.top + top,
+    barW,
+    barH,
   );
-  canvas.drawRRect(plate, Paint()..color = const Color(0x66000000));
+  return _ScaleGeometry(plate, bar, labels, unitLabel);
+}
+
+/// Box of the colour scale for the given output size.
+Rect scaleRect(Size size, SceneData data) => _scaleGeometry(size, data).plate;
+
+void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
+  final _ScaleGeometry g = _scaleGeometry(size, data);
+  final Rect bar = g.bar;
+  canvas.drawRRect(
+    RRect.fromRectAndRadius(g.plate, Radius.circular(5 * unit)),
+    Paint()..color = const Color(0x66000000),
+  );
 
   final List<Color> colors = <Color>[
     for (int i = 255; i >= 0; i -= 17) Color(_rgbaToArgb(data.palette.rgba[i])),
@@ -410,9 +476,10 @@ void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
       ..strokeWidth = 0.8 * unit
       ..color = Colors.white70,
   );
+  final int ticks = g.labels.length;
   for (int i = 0; i < ticks; i++) {
     final double y = bar.top + bar.height * i / (ticks - 1);
-    final TextPainter tp = labels[i];
+    final TextPainter tp = g.labels[i];
     tp.paint(
       canvas,
       Offset(bar.left - 5 * unit - tp.width, y - tp.height / 2),
@@ -425,11 +492,12 @@ void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
         ..strokeWidth = 0.8 * unit,
     );
   }
-  final TextPainter unitLabel =
-      _text('°C', 10 * unit, Colors.white70, weight: FontWeight.w500);
-  unitLabel.paint(
+  g.unitLabel.paint(
     canvas,
-    Offset(bar.center.dx - unitLabel.width / 2, bar.top - 7 * unit - unitLabel.height),
+    Offset(
+      bar.center.dx - g.unitLabel.width / 2,
+      bar.top - 2 * unit - g.unitLabel.height,
+    ),
   );
 }
 
@@ -442,34 +510,31 @@ String formatTimestamp(DateTime t) {
       '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
 }
 
-void _paintTimestamp(
-  Canvas canvas,
-  Size size,
-  DateTime t,
-  int corner,
-  double unit,
-) {
-  final TextPainter tp = _text(
-    formatTimestamp(t),
-    11 * unit,
-    Colors.white,
-    weight: FontWeight.w500,
+TextPainter _clockText(Size size, SceneData data) => _text(
+  formatTimestamp(data.timestamp),
+  11 * _unit(size),
+  Colors.white,
+  weight: FontWeight.w500,
+);
+
+/// Box of the timestamp; it sits flush against the image edges.
+Rect clockRect(Size size, SceneData data) {
+  final double unit = _unit(size);
+  final TextPainter tp = _clockText(size, data);
+  return _place(
+    size,
+    data.layout.clockPos,
+    tp.width + 10 * unit,
+    tp.height + 5 * unit,
+    0,
   );
-  // The plate sits flush in the chosen corner of the image.
-  final double padX = 5 * unit;
-  final double padY = 2.5 * unit;
-  final double w = tp.width + 2 * padX;
-  final double h = tp.height + 2 * padY;
-  final bool right = corner == 1 || corner == 3;
-  final bool bottom = corner >= 2;
-  final Rect plate = Rect.fromLTWH(
-    right ? size.width - w : 0,
-    bottom ? size.height - h : 0,
-    w,
-    h,
-  );
+}
+
+void _paintTimestamp(Canvas canvas, Size size, SceneData data, double unit) {
+  final TextPainter tp = _clockText(size, data);
+  final Rect plate = clockRect(size, data);
   canvas.drawRect(plate, Paint()..color = const Color(0x8C000000));
-  tp.paint(canvas, plate.topLeft + Offset(padX, padY));
+  tp.paint(canvas, plate.topLeft + Offset(5 * unit, 2.5 * unit));
 }
 
 /// Screen painter wrapper around [paintScene].

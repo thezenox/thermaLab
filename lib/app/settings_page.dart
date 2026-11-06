@@ -120,22 +120,13 @@ class SettingsPage extends StatelessWidget {
               label: '${c.minSpan.toStringAsFixed(0)} °C',
               onChanged: c.fixedScale ? null : c.setMinSpan,
             ),
-            ListTile(
-              title: const Text('Timestamp position'),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: SegmentedButton<int>(
-                  showSelectedIcon: false,
-                  segments: const <ButtonSegment<int>>[
-                    ButtonSegment<int>(value: 0, label: Text('↖')),
-                    ButtonSegment<int>(value: 1, label: Text('↗')),
-                    ButtonSegment<int>(value: 2, label: Text('↙')),
-                    ButtonSegment<int>(value: 3, label: Text('↘')),
-                  ],
-                  selected: <int>{c.timestampCorner},
-                  onSelectionChanged: (Set<int> v) =>
-                      c.applySetting('timestampCorner', v.first),
-                ),
+            const ListTile(
+              leading: Icon(Icons.edit_note),
+              title: Text('Arrange the display'),
+              subtitle: Text(
+                'Use the edit button at the top right of the main screen to '
+                'show or hide clock, colour scale and markers and to move '
+                'them.',
               ),
             ),
             ListTile(

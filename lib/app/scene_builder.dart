@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import '../overlay/visible_camera.dart';
 import '../probe/probe_controller.dart';
+import '../render/scene_layout.dart';
 import '../render/scene_painter.dart';
 
 /// Assembles the drawable scene from the controller's latest frame, or null
@@ -10,6 +11,7 @@ SceneData? buildScene(
   ProbeController c, {
   VisibleCamera? camera,
   int? highlightedPointId,
+  bool editing = false,
 }) {
   final ui.Image? image = c.image;
   final FrameStats? s = c.stats;
@@ -22,20 +24,24 @@ SceneData? buildScene(
       c.coldMarker ?? (s.coldest.$1.toDouble(), s.coldest.$2.toDouble());
   final (double, double) hot =
       c.hotMarker ?? (s.hottest.$1.toDouble(), s.hottest.$2.toDouble());
+  final SceneLayout layout = c.layout;
   final List<SceneMarker> markers = <SceneMarker>[
-    SceneMarker(
+    if (layout.showColdest)
+      SceneMarker(
       x: cold.$1,
       y: cold.$2,
       temperature: s.minTemp,
       kind: MarkerKind.coldest,
     ),
-    SceneMarker(
+    if (layout.showHottest)
+      SceneMarker(
       x: hot.$1,
       y: hot.$2,
       temperature: s.maxTemp,
       kind: MarkerKind.hottest,
     ),
-    SceneMarker(
+    if (layout.showCentre)
+      SceneMarker(
       x: (f.width ~/ 2).toDouble(),
       y: (f.height ~/ 2).toDouble(),
       temperature: s.centerTemp,
@@ -68,7 +74,8 @@ SceneData? buildScene(
     markers: markers,
     timestamp: DateTime.now(),
     highlightedMarker: highlighted,
-    timestampCorner: c.timestampCorner,
+    layout: layout,
+    editing: editing,
     labelOutline: c.labelOutline,
     mirror: c.mirror,
     overlay: _overlayLayer(camera),

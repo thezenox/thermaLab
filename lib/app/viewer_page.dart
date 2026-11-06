@@ -11,6 +11,7 @@ import '../overlay/overlay_feature.dart';
 import '../overlay/visible_camera.dart';
 import '../probe/probe_controller.dart';
 import '../render/geometry.dart';
+import '../render/scene_layout.dart';
 import '../render/scene_painter.dart';
 import 'scene_builder.dart';
 import 'settings_page.dart';
@@ -45,6 +46,14 @@ class _ViewerPageState extends State<ViewerPage> {
 
   /// White flash over the image when a photo is taken.
   double _flash = 0;
+
+  /// Layout edit mode: toggle and move the overlay elements.
+  bool _editing = false;
+
+  /// Element being dragged in edit mode ('clock' or 'scale').
+  String? _dragElement;
+  Offset _dragStartFraction = Offset.zero;
+  Offset _dragStartLocal = Offset.zero;
 
   /// Touch distance (logical pixels) within which a point can be grabbed.
   static const double _grabRadius = 32;
@@ -192,13 +201,69 @@ class _ViewerPageState extends State<ViewerPage> {
     if (c.busy && c.streaming) {
       chips.add(const _Badge(color: Colors.blueGrey, text: 'Shutter…'));
     }
+    if (_editing) return _editBar();
     return SizedBox(
-      height: 32,
+      height: 40,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: <Widget>[
           for (final Widget w in chips)
             Padding(padding: const EdgeInsets.only(right: 8), child: w),
+          IconButton(
+            tooltip: 'Arrange display',
+            onPressed: c.image == null ? null : () => setState(() => _editing = true),
+            icon: const _EditLayoutIcon(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Toggles for every overlay element, shown while editing the layout.
+  Widget _editBar() {
+    final SceneLayout l = c.layout;
+    Widget toggle(String label, bool on, SceneLayout Function(bool) apply) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: FilterChip(
+          label: Text(label),
+          selected: on,
+          showCheckmark: false,
+          visualDensity: VisualDensity.compact,
+          onSelected: (bool v) => c.setLayout(apply(v), persist: false),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: <Widget>[
+                  toggle('Clock', l.showClock, (bool v) => l.copyWith(showClock: v)),
+                  toggle('Colour bar', l.showScale, (bool v) => l.copyWith(showScale: v)),
+                  toggle('Centre', l.showCentre, (bool v) => l.copyWith(showCentre: v)),
+                  toggle('Max', l.showHottest, (bool v) => l.copyWith(showHottest: v)),
+                  toggle('Min', l.showColdest, (bool v) => l.copyWith(showColdest: v)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          FilledButton(
+            onPressed: () {
+              c.setLayout(c.layout);
+              setState(() {
+                _editing = false;
+                _dragElement = null;
+              });
+            },
+            child: const Text('Done'),
+          ),
         ],
       ),
     );
@@ -219,6 +284,7 @@ class _ViewerPageState extends State<ViewerPage> {
       c,
       camera: camera,
       highlightedPointId: _dragging?.id,
+      editing: _editing,
     );
     if (data == null) return const CircularProgressIndicator();
 
@@ -276,6 +342,58 @@ class _ViewerPageState extends State<ViewerPage> {
               _dragging = null;
               _overTrash = false;
             });
+          }
+
+          if (_editing) {
+            return GestureDetector(
+              onPanStart: (DragStartDetails d) {
+                final Offset at = d.localPosition;
+                String? hit;
+                if (data.layout.showClock &&
+                    clockRect(size, data).inflate(14).contains(at)) {
+                  hit = 'clock';
+                } else if (data.layout.showScale &&
+                    scaleRect(size, data).inflate(14).contains(at)) {
+                  hit = 'scale';
+                }
+                if (hit == null) return;
+                _dragElement = hit;
+                _dragStartLocal = at;
+                _dragStartFraction = hit == 'clock'
+                    ? c.layout.clockPos
+                    : c.layout.scalePos;
+              },
+              onPanUpdate: (DragUpdateDetails d) {
+                final String? el = _dragElement;
+                if (el == null) return;
+                // Free space the fraction is relative to (element size and
+                // edge margin as used by the painter).
+                final Rect r = el == 'clock'
+                    ? clockRect(size, data)
+                    : scaleRect(size, data);
+                final double margin =
+                    el == 'clock' ? 0 : 6 * size.shortestSide / 360;
+                final double freeW = size.width - 2 * margin - r.width;
+                final double freeH = size.height - 2 * margin - r.height;
+                final Offset delta = d.localPosition - _dragStartLocal;
+                final Offset pos = Offset(
+                  snapFraction(
+                    _dragStartFraction.dx + (freeW > 0 ? delta.dx / freeW : 0),
+                  ),
+                  snapFraction(
+                    _dragStartFraction.dy + (freeH > 0 ? delta.dy / freeH : 0),
+                  ),
+                );
+                c.setLayout(
+                  el == 'clock'
+                      ? c.layout.copyWith(clockPos: pos)
+                      : c.layout.copyWith(scalePos: pos),
+                  persist: false,
+                );
+              },
+              onPanEnd: (_) => _dragElement = null,
+              child: CustomPaint(size: size, painter: ScenePainter(data)),
+            );
           }
 
           return GestureDetector(
@@ -688,6 +806,42 @@ class _ChipButton extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Gear with a small pencil: "arrange the display".
+class _EditLayoutIcon extends StatelessWidget {
+  const _EditLayoutIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 28,
+      height: 28,
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            left: 0,
+            top: 0,
+            child: Icon(Icons.settings_outlined, color: Colors.white70, size: 22),
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black,
+                shape: BoxShape.circle,
+              ),
+              child: Padding(
+                padding: EdgeInsets.all(1),
+                child: Icon(Icons.edit, color: Color(0xFFD4A84B), size: 13),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

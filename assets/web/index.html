@@ -168,9 +168,12 @@
         <div class="inline"><input type="number" id="sMin" step="1"> … <input type="number" id="sMax" step="1"> °C</div></div>
       <div class="row"><label for="sSpan">Minimum colour span: <span id="sSpanVal"></span> °C</label>
         <input type="range" id="sSpan" min="0" max="20" step="1"></div>
-      <div class="row"><label for="sCorner">Timestamp position</label>
-        <select id="sCorner"><option value="0">Top left</option><option value="1">Top right</option>
-        <option value="2">Bottom left</option><option value="3">Bottom right</option></select></div>
+      <div class="row"><label>Show in the image</label>
+        <label><input type="checkbox" id="lClock"> Clock</label>
+        <label><input type="checkbox" id="lScale"> Colour bar</label>
+        <label><input type="checkbox" id="lCentre"> Centre</label>
+        <label><input type="checkbox" id="lHot"> Max</label>
+        <label><input type="checkbox" id="lCold"> Min</label></div>
       <div class="row"><label for="sOutline">Outline around marker labels</label>
         <select id="sOutline"><option value="0">Shadow</option><option value="1">Normal</option><option value="2">Thick</option></select></div>
       <div class="row"><label><input type="checkbox" id="sAuto"> Automatic shutter</label></div>
@@ -380,8 +383,9 @@ function paintScene(cw, ch, fit, interactive) {
     }
     drawMarker(m, x, y, unit, interactive && drag && drag.id === id && id !== null, s.labelOutline);
   }
-  drawScale(h, unit);
-  drawTimestamp(h.time, s.timestampCorner, unit);
+  const layout = s.layout || {};
+  if (layout.showScale !== false) drawScale(h, unit, layout);
+  if (layout.showClock !== false) drawTimestamp(h.time, layout, unit);
   if (interactive && drag) drawTrash(unit);
   ctx.restore();
 }
@@ -526,18 +530,29 @@ function drawMarker(m, x, y, unit, big, outline) {
   const ly = Math.min(Math.max(py, imageRect.y + size), imageRect.y + imageRect.h - size);
   label(text, lx, ly, size, color, outline);
 }
-function drawScale(h, unit) {
+// Places an element of w x h at fractional position (fx, fy) inside the
+// image, keeping a margin to the edges (same rule as the phone).
+function place(fx, fy, w, h, margin) {
+  const r = imageRect;
+  return {
+    x: r.x + margin + fx * Math.max(0, r.w - 2 * margin - w),
+    y: r.y + margin + fy * Math.max(0, r.h - 2 * margin - h),
+  };
+}
+function drawScale(h, unit, layout) {
   const r = imageRect;
   const barW = 9 * unit, barH = Math.min(r.h * 0.42, 170 * unit);
-  const right = r.x + r.w - 8 * unit;
-  const bx = right - barW, by = r.y + (r.h - barH) / 2;
-  const ticks = 5, size = 10.5 * unit;
+  const ticks = 5, size = 10.5 * unit, unitSize = 10 * unit;
   ctx.font = `500 ${size}px system-ui, sans-serif`;
   const labels = [];
   for (let i = 0; i < ticks; i++) labels.push((h.hi - (h.hi - h.lo) * i / (ticks - 1)).toFixed(1));
   const lw = Math.max(...labels.map((l) => ctx.measureText(l).width));
+  const top = 6 * unit + unitSize * 1.2 + 2 * unit;
+  const plateW = lw + 10 * unit + barW + 4 * unit, plateH = top + barH + 8 * unit;
+  const pos = place(layout.scaleX ?? 1, layout.scaleY ?? 0.5, plateW, plateH, 6 * unit);
+  const bx = pos.x + plateW - 4 * unit - barW, by = pos.y + top;
   ctx.fillStyle = 'rgba(0,0,0,.4)';
-  roundRect(bx - lw - 10 * unit, by - 8 * unit, lw + barW + 14 * unit, barH + 16 * unit, 5 * unit); ctx.fill();
+  roundRect(pos.x, pos.y, plateW, plateH, 5 * unit); ctx.fill();
   const g = ctx.createLinearGradient(0, by, 0, by + barH);
   for (let i = 0; i <= 15; i++) {
     const k = 255 - i * 17;
@@ -554,19 +569,18 @@ function drawScale(h, unit) {
     ctx.fillText(labels[i], bx - 5 * unit, y); ctx.shadowBlur = 0;
   }
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillStyle = 'rgba(255,255,255,.7)';
-  ctx.font = `500 ${10 * unit}px system-ui, sans-serif`;
-  ctx.fillText('°C', bx + barW / 2, by - 7 * unit);
+  ctx.font = `500 ${unitSize}px system-ui, sans-serif`;
+  ctx.fillText('°C', bx + barW / 2, by - 2 * unit);
 }
-function drawTimestamp(text, corner, unit) {
-  const r = imageRect, size = 11 * unit;
+function drawTimestamp(text, layout, unit) {
+  const size = 11 * unit;
   ctx.font = `500 ${size}px system-ui, sans-serif`;
   const padX = 5 * unit, padY = 2.5 * unit;
   const w = ctx.measureText(text).width + 2 * padX, h = size * 1.25 + 2 * padY;
-  const right = corner === 1 || corner === 3, bottom = corner >= 2;
-  const x = right ? r.x + r.w - w : r.x, y = bottom ? r.y + r.h - h : r.y;
-  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x, y, w, h);
+  const pos = place(layout.clockX ?? 0, layout.clockY ?? 1, w, h, 0);
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(pos.x, pos.y, w, h);
   ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(text, x + padX, y + h / 2);
+  ctx.fillText(text, pos.x + padX, pos.y + h / 2);
 }
 function trashRect(unit) {
   const r = imageRect, s = 56 * Math.max(unit, 0.8);
@@ -626,7 +640,8 @@ function syncControls(h) {
   setIfIdle($('sMax'), 'value', s.fixedMax);
   setIfIdle($('sSpan'), 'value', s.minSpan);
   $('sSpanVal').textContent = Math.round(s.minSpan);
-  setIfIdle($('sCorner'), 'value', String(s.timestampCorner));
+  const lay = s.layout || {};
+  for (const [id, key] of LAYOUT_TOGGLES) setIfIdle($(id), 'checked', lay[key] !== false);
   setIfIdle($('sOutline'), 'value', String(s.labelOutline));
   setIfIdle($('sAuto'), 'checked', s.autoShutter);
   setIfIdle($('sMirror'), 'checked', !!s.mirror);
@@ -676,7 +691,9 @@ $('sFixed').onchange = (e) => set('fixedScale', e.target.checked);
 $('sMin').onchange = (e) => set('fixedMin', parseFloat(e.target.value));
 $('sMax').onchange = (e) => set('fixedMax', parseFloat(e.target.value));
 $('sSpan').oninput = (e) => set('minSpan', parseFloat(e.target.value));
-$('sCorner').onchange = (e) => set('timestampCorner', parseInt(e.target.value, 10));
+const LAYOUT_TOGGLES = [['lClock', 'showClock'], ['lScale', 'showScale'], ['lCentre', 'showCentre'],
+  ['lHot', 'showHottest'], ['lCold', 'showColdest']];
+for (const [id, key] of LAYOUT_TOGGLES) $(id).onchange = (e) => set('layout', { [key]: e.target.checked });
 $('sOutline').onchange = (e) => set('labelOutline', parseInt(e.target.value, 10));
 $('sAuto').onchange = (e) => set('autoShutter', e.target.checked);
 $('sMirror').onchange = (e) => set('mirror', e.target.checked);

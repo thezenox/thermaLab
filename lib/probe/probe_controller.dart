@@ -12,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../render/palette.dart';
+import '../render/scene_layout.dart';
 import '../t2s/camera_catalog.dart';
 import '../t2s/flat_field.dart';
 import '../t2s/shutter_correction.dart';
@@ -144,9 +145,8 @@ class ProbeController extends ChangeNotifier {
   double fixedMin = 15;
   double fixedMax = 40;
 
-  /// Corner of the timestamp: 0 top-left, 1 top-right, 2 bottom-left,
-  /// 3 bottom-right.
-  int timestampCorner = 2;
+  /// Which overlay elements are shown and where clock and scale sit.
+  SceneLayout layout = const SceneLayout();
 
   /// Outline around marker labels: 0 shadow only, 1 normal, 2 thick.
   int labelOutline = 1;
@@ -289,7 +289,13 @@ class ProbeController extends ChangeNotifier {
     fixedScale = prefs.getBool('fixedScale') ?? false;
     fixedMin = prefs.getDouble('fixedMin') ?? 15;
     fixedMax = prefs.getDouble('fixedMax') ?? 40;
-    timestampCorner = prefs.getInt('timestampCorner') ?? 2;
+    final String? layoutJson = prefs.getString('layout');
+    final int? oldCorner = prefs.getInt('timestampCorner');
+    layout = layoutJson != null
+        ? SceneLayout.fromJson(jsonDecode(layoutJson) as Map<String, dynamic>)
+        : (oldCorner != null
+              ? SceneLayout.fromTimestampCorner(oldCorner)
+              : const SceneLayout());
     labelOutline = prefs.getInt('labelOutline') ?? 1;
     mirror = prefs.getBool('mirror') ?? false;
     flatFieldEnabled = prefs.getBool('flatFieldEnabled') ?? true;
@@ -309,7 +315,7 @@ class ProbeController extends ChangeNotifier {
     'fixedScale': fixedScale,
     'fixedMin': fixedMin,
     'fixedMax': fixedMax,
-    'timestampCorner': timestampCorner,
+    'layout': layout.toJson(),
     'labelOutline': labelOutline,
     'autoShutter': autoShutter,
     'mirror': mirror,
@@ -354,11 +360,12 @@ class ProbeController extends ChangeNotifier {
         if (v == null) return;
         fixedMax = v;
         await prefs.setDouble('fixedMax', v);
-      case 'timestampCorner':
-        final int? v = asInt();
-        if (v == null) return;
-        timestampCorner = v.clamp(0, 3);
-        await prefs.setInt('timestampCorner', timestampCorner);
+      case 'layout':
+        if (value is! Map) return;
+        await setLayout(
+          SceneLayout.fromJson(Map<String, dynamic>.from(value), layout),
+        );
+        return;
       case 'labelOutline':
         final int? v = asInt();
         if (v == null) return;
@@ -379,6 +386,15 @@ class ProbeController extends ChangeNotifier {
         return;
     }
     notifyListeners();
+  }
+
+  /// Changes the overlay layout; [persist] false while dragging.
+  Future<void> setLayout(SceneLayout value, {bool persist = true}) async {
+    layout = value;
+    notifyListeners();
+    if (!persist) return;
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('layout', jsonEncode(value.toJson()));
   }
 
   Future<void> setMinSpan(double value) async {
