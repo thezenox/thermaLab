@@ -1,0 +1,18 @@
+# Kept out of code search (ripgrep and agent search tools read this file).
+# Git still tracks these, and they can be opened directly.
+
+# Vendored USB plugin: third-party C libraries, upstream libuvc, generated
+# bindings, and desktop backends the Android-only app never builds.
+# The app uses the plugin through lib/src/uvc_camera_api.dart; see FORK.md.
+packages/flutter_ffi_uvc/src/backend_libuvc/third_party/
+packages/flutter_ffi_uvc/src/backend_libuvc/libuvc/
+packages/flutter_ffi_uvc/lib/src/flutter_ffi_uvc_bindings_generated.dart
+packages/flutter_ffi_uvc/macos/
+packages/flutter_ffi_uvc/windows/
+packages/flutter_ffi_uvc/linux/
+packages/flutter_ffi_uvc/NOTICES
+packages/flutter_ffi_uvc/THIRD_PARTY_NOTICES.md
+
+# Lockfile and licence text.
+pubspec.lock
+LICENSE
